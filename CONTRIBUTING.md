@@ -1,58 +1,61 @@
 # 贡献指南
 
-## 环境要求
+## 需要准备什么
 
-- Windows 10 1809+ / Windows 11
-- .NET SDK 10.0.100 或更高（`dotnet --version`）
-- 可选：Visual Studio 2022 17.14+ 或 VS Code（C# Dev Kit）
+- Windows 10 1809 或更新（Windows 11 一样跑）
+- .NET SDK 10.0.100 以上，用 `dotnet --version` 确认
+- 编辑器随意：Visual Studio 2022（17.14 以上）或者 VS Code + C# Dev Kit 都行
 
-不需要安装 Windows App SDK 运行时、也不需要开启开发者模式：应用以**免打包（unpackaged）**
-方式构建，`WindowsAppSDKSelfContained` 会把运行时随程序一起复制。
+不用装 Windows App SDK 运行时，也不用打开开发者模式。项目按「免打包」方式构建，
+发布时由 `WindowsAppSDKSelfContained` 把运行时一起复制到输出目录。
 
-## 构建与测试
+## 编译、测试、打包
 
 ```powershell
-dotnet build AirSend.slnx -c Release      # 编译
-dotnet test tests/AirSend.Core.Tests/AirSend.Core.Tests.csproj   # 59 项单元测试
+dotnet build AirSend.slnx -c Release                             # 编译
+dotnet test tests/AirSend.Core.Tests/AirSend.Core.Tests.csproj   # 单元测试
 dotnet run --project src/AirSend.App/AirSend.App.csproj          # 直接运行
 ```
 
-生成 zip 分发包（自包含、解压即用）：
+打一个解压即用的 zip（默认 Release / win-x64，自带运行时）：
 
 ```powershell
-.\build-release.ps1                       # 默认 Release / win-x64
+.\build-release.ps1
 .\build-release.ps1 -RuntimeIdentifier win-arm64
 ```
 
-## 代码结构
+## 代码在哪
 
-| 目录 | 内容 |
+| 目录 | 里面是什么 |
 |---|---|
-| `src/AirSend.App` | WinUI 3 界面（三个视图 + ViewModel + 服务：设置、托盘、单实例、本地化、语音测试） |
-| `src/AirSend.Core` | 协议与音频核心：mDNS 发现、RTSP/plist、SRP/Curve25519/Ed25519/ChaCha20、ALAC、RTP、WASAPI 采集 |
-| `tests/AirSend.Core.Tests` | 单元测试：RFC 向量、与独立参考实现逐字节比对、脚本化接收器完整握手 |
+| `src/AirSend.App` | WinUI 3 界面：设备 / 播放 / 设置三个页面、ViewModel，以及设置存储、托盘、单实例、本地化、语音测试这些服务 |
+| `src/AirSend.Core` | 协议与音频核心：mDNS 发现、RTSP 与二进制 plist、SRP-6a、Curve25519 / Ed25519、ChaCha20-Poly1305、ALAC、RTP、NTP 授时、WASAPI 采集 |
+| `tests/AirSend.Core.Tests` | 单元测试：RFC 官方测试向量、与独立参考实现逐字节比对、对着脚本化的模拟接收器跑完整握手 |
 
-改动协议层时请跑测试；涉及真机的改动（配对、SETUP、音频）建议在真实 AirPlay 2 接收器上验证，
-并在 [PORTING.md](PORTING.md) 里记录结论。
+## 改的时候注意几点
 
-## 提交约定
+- 动了协议层的代码，先把测试跑一遍。
+- 涉及真机的部分（配对、SETUP、音频输出）最好在真实的 AirPlay 2 接收器上过一遍，
+  结论记到 [PORTING.md](PORTING.md) 里 —— 那里同时记着已经被排除的猜测和踩过的坑。
+- 提交信息写清**为什么改**，不要只写「改了什么」；一个提交只做一件事。
+- XAML 里不要用字符 emoji，图标统一用 Segoe Fluent。
+- 界面上的新文案三种语言（zh / en / es）都要补齐，位置在
+  `src/AirSend.App/Services/Localization.cs`。
 
-- 提交信息用现在时、说明「为什么」而不只是「改了什么」；
-- 一个提交只做一件事；
-- XAML 里避免字符 emoji，统一用 Segoe Fluent 图标；
-- 新增用户可见文案时，三种语言（zh / en / es）都要补齐，见 `src/AirSend.App/Services/Localization.cs`。
+## 许可
 
-## 许可证
-
-GPL-3.0-or-later。提交代码即表示同意以该许可证发布。来源与致谢见 [CREDITS.md](CREDITS.md)。
+GPL-3.0-or-later。提交代码即表示同意按这个许可证发布。来源与致谢见 [CREDITS.md](CREDITS.md)。
 
 ---
 
 ## Contributing (English)
 
-- Requirements: Windows 10 1809+, .NET SDK 10+. No Windows App SDK runtime install and no
-  Developer Mode needed (the app builds unpackaged and ships self-contained).
+- Requirements: Windows 10 1809+, .NET SDK 10.0.100+. No Windows App SDK runtime install and no
+  Developer Mode needed — the app builds unpackaged and ships self-contained.
 - Build with `dotnet build AirSend.slnx -c Release`, test with `dotnet test`, package with
   `.\build-release.ps1`.
-- Please keep `PORTING.md` up to date when you change protocol behaviour, add user visible
-  strings in all three languages, and prefer Segoe Fluent icons over text emoji.
+- Run the tests when you change the protocol layer, and verify anything involving real hardware
+  (pairing, SETUP, audio output) against an actual AirPlay 2 receiver — then write the result
+  down in [PORTING.md](PORTING.md).
+- Add user-visible strings in all three languages (see `src/AirSend.App/Services/Localization.cs`),
+  and prefer Segoe Fluent icons over text emoji.
