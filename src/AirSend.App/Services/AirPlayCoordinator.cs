@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using AirSend.Core.Capture;
 using AirSend.Core.Discovery;
 using AirSend.Core.Logging;
 using AirSend.Core.Pairing;
@@ -28,6 +29,7 @@ public sealed record StreamingTarget(
 public sealed class AirPlayCoordinator : IAsyncDisposable
 {
     private readonly AirPlayDiscovery _discovery = new();
+    private readonly AudioEndpointWatcher _endpointWatcher = new();
     private readonly SettingsStore _settings;
     private readonly ConcurrentDictionary<string, AirPlayStreamSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, AirPlayDevice> _discovered = new(StringComparer.OrdinalIgnoreCase);
@@ -41,6 +43,8 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
     {
         _settings = settings;
         _discovery.DeviceDiscovered += OnDeviceDiscovered;
+        _endpointWatcher.DefaultOutputChanged += OnDefaultOutputChanged;
+        _endpointWatcher.Start();
         Latency = settings.Latency;
         Volume = settings.Volume;
         MultiDevice = settings.MultiDevice;
@@ -54,6 +58,13 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
 
     /// <summary>Raised when a stream stops on its own (capture failure, receiver gone).</summary>
     public event Action? StreamingStopped;
+
+    /// <summary>
+    /// Raised when the captured audio source changed: either Windows switched its
+    /// default output device, or the user picked another endpoint in the settings.
+    /// The UI uses it to rebuild the capture-source picker.
+    /// </summary>
+    public event Action? CaptureSourceChanged;
 
     public bool IsPlaying => !_sessions.IsEmpty;
 
@@ -79,7 +90,24 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
     public string? CaptureDeviceId
     {
         get => _settings.CaptureDeviceId;
-        set => _settings.CaptureDeviceId = value;
+        set
+        {
+            if (string.Equals(_settings.CaptureDeviceId, value, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _settings.CaptureDeviceId = value;
+
+            // Applies to the streams already playing: without this the picker only
+            // took effect the next time playback was started.
+            foreach (AirPlayStreamSession session in _sessions.Values)
+            {
+                session.RestartCapture(value);
+            }
+
+            CaptureSourceChanged?.Invoke();
+        }
     }
 
     /// <summary>Auto-connect on startup, and the device it targets (null = last used).</summary>
@@ -362,8 +390,31 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _discovery.DeviceDiscovered -= OnDeviceDiscovered;
+        _endpointWatcher.DefaultOutputChanged -= OnDefaultOutputChanged;
+        _endpointWatcher.Dispose();
         await StopStreamingAsync().ConfigureAwait(false);
         await _discovery.DisposeAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Windows switched its default playback device. Streams that follow the system
+    /// default have to be re-pointed at the new endpoint: a WASAPI loopback client
+    /// keeps reading from the device it was opened on, which from here on receives
+    /// nothing but silence.
+    /// </summary>
+    private void OnDefaultOutputChanged(string? deviceId)
+    {
+        AppLog.Info($"salida predeterminada del sistema → {deviceId ?? "(ninguna)"}");
+
+        foreach (AirPlayStreamSession session in _sessions.Values)
+        {
+            if (session.FollowsSystemDefaultCapture)
+            {
+                session.RestartCapture(null);
+            }
+        }
+
+        CaptureSourceChanged?.Invoke();
     }
 
     private void OnDeviceDiscovered(AirPlayDevice device)

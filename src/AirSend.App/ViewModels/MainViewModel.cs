@@ -5,12 +5,16 @@ using AirSend.Core.Capture;
 using AirSend.Core.Logging;
 using AirSend.Core.Probe;
 using AirSend.Core.Streaming;
+using AirSend.Core.Updates;
 using AirSend.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Dispatching;
 
 namespace AirSend.ViewModels;
+
+/// <summary>Result of staging an update: either the script to run, or what failed.</summary>
+public sealed record UpdatePreparation(string? ScriptPath, string? Error);
 
 public partial class MainViewModel : ObservableObject
 {
@@ -43,10 +47,22 @@ public partial class MainViewModel : ObservableObject
     private bool _loadingAutoConnect;
     private bool _loadingLanguage;
     private bool _loadingStartup;
+    private bool _loadingUpdatePolicy;
     private bool _loudVolumeSuppressed;
     private bool _suppressVolumeHandling;
     private double _appliedVolumePercent;
     private int _quietHintToken;
+
+    /// <summary>Order of the update-interval picker; index ↔ policy.</summary>
+    private static readonly UpdateCheckInterval[] UpdateIntervals =
+    [
+        UpdateCheckInterval.Startup,
+        UpdateCheckInterval.Daily,
+        UpdateCheckInterval.Weekly,
+        UpdateCheckInterval.Never,
+    ];
+
+    private readonly UpdateService _updates = App.Updates;
 
     public MainViewModel(AirPlayCoordinator coordinator, Localization localization)
     {
@@ -67,6 +83,8 @@ public partial class MainViewModel : ObservableObject
 
         _coordinator.DeviceDiscovered += OnDeviceDiscovered;
         _coordinator.AsyncError += OnAsyncError;
+        _coordinator.CaptureSourceChanged += OnCaptureSourceChanged;
+        _updates.CheckCompleted += OnUpdateCheckCompleted;
         _localization.LanguageChanged += OnLanguageChanged;
         AppLog.EntryWritten += OnLogEntry;
 
@@ -76,6 +94,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         ApplyLanguage();
+        ApplyUpdatePolicy();
         UpdateStatusText();
         RefreshLatencyUi();
     }
@@ -155,6 +174,8 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<string> AutoConnectOptions { get; } = new();
 
     public ObservableCollection<string> LanguageOptions { get; } = new();
+
+    public ObservableCollection<string> UpdatePolicyOptions { get; } = new();
 
     [ObservableProperty]
     public partial string Subtitle { get; set; } = string.Empty;
@@ -258,6 +279,24 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     public partial int SelectedLanguageIndex { get; set; }
+
+    [ObservableProperty]
+    public partial string UpdateGroupLabel { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string UpdatePolicyLabel { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string UpdatePolicyHint { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string CheckNowText { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial int SelectedUpdatePolicyIndex { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsCheckingUpdates { get; set; }
 
     [ObservableProperty]
     public partial string LogsHint { get; set; } = string.Empty;
@@ -440,6 +479,7 @@ public partial class MainViewModel : ObservableObject
     {
         _coordinator.StartDiscovery();
         LoadStartupState();
+        _updates.Start();
     }
 
     /// <summary>
@@ -489,7 +529,9 @@ public partial class MainViewModel : ObservableObject
                 CaptureSourceOptions.Add(_localization.T("capture_follow_default"));
                 foreach (AudioRenderDevice device in devices)
                 {
-                    CaptureSourceOptions.Add(device.DisplayName);
+                    CaptureSourceOptions.Add(device.IsDefault
+                        ? _localization.T("capture_device_default", new { name = device.Name })
+                        : device.Name);
                 }
 
                 string? saved = _coordinator.CaptureDeviceId;
@@ -1252,6 +1294,50 @@ public partial class MainViewModel : ObservableObject
         _localization.SetLanguage(Localization.Options[value].Tag);
     }
 
+    /// <summary>
+    /// Fills the update-interval picker. Rebuilding the list resets a ComboBox to
+    /// -1, so the current policy is re-selected the same way the other pickers do it.
+    /// </summary>
+    private void ApplyUpdatePolicy()
+    {
+        _loadingUpdatePolicy = true;
+        try
+        {
+            UpdatePolicyOptions.Clear();
+            foreach (UpdateCheckInterval interval in UpdateIntervals)
+            {
+                UpdatePolicyOptions.Add(_localization.T(PolicyLabelKey(interval)));
+            }
+
+            int index = Array.IndexOf(UpdateIntervals, _updates.Policy);
+            SelectedUpdatePolicyIndex = -1;
+            SelectedUpdatePolicyIndex = index < 0 ? 0 : index;
+        }
+        finally
+        {
+            _loadingUpdatePolicy = false;
+        }
+    }
+
+    private static string PolicyLabelKey(UpdateCheckInterval interval) => interval switch
+    {
+        UpdateCheckInterval.Never => "update_policy_never",
+        UpdateCheckInterval.Daily => "update_policy_daily",
+        UpdateCheckInterval.Weekly => "update_policy_weekly",
+        _ => "update_policy_startup",
+    };
+
+    partial void OnSelectedUpdatePolicyIndexChanged(int value)
+    {
+        if (_loadingUpdatePolicy || value < 0 || value >= UpdateIntervals.Length)
+        {
+            return;
+        }
+
+        _updates.Policy = UpdateIntervals[value];
+        AppLog.Info($"comprobación de actualizaciones: {UpdatePolicy.ToSetting(UpdateIntervals[value])}");
+    }
+
     private void RefreshAutoConnectOptions()
     {
         _loadingAutoConnect = true;
@@ -1337,6 +1423,115 @@ public partial class MainViewModel : ObservableObject
             RefreshDevices();
             _ = device;
         });
+
+    /// <summary>
+    /// The captured endpoint changed underneath us (Windows switched its default
+    /// output, or the user picked another source). Rebuilding the picker moves the
+    /// "default" marker to the device Windows is playing to now; the selection
+    /// itself is restored from the settings, so it is not reset to the first entry.
+    /// </summary>
+    private void OnCaptureSourceChanged() => RunOnUi(LoadCaptureSources);
+
+    /// <summary>
+    /// Raised on the UI thread when a newer release is published. The page owns the
+    /// dialog (a ContentDialog needs the XamlRoot) and answers by downloading the
+    /// update or by leaving it for later.
+    /// </summary>
+    public event Action<UpdateRelease>? UpdateAvailable;
+
+    [RelayCommand]
+    private async Task CheckForUpdatesAsync()
+    {
+        if (IsCheckingUpdates)
+        {
+            return;
+        }
+
+        IsCheckingUpdates = true;
+        CheckNowText = _localization.T("update_checking");
+
+        try
+        {
+            await _updates.CheckAsync(manual: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            RunOnUi(() =>
+            {
+                IsCheckingUpdates = false;
+                CheckNowText = _localization.T("update_check_now");
+            });
+        }
+    }
+
+    /// <summary>
+    /// Downloads the package for this build and stages it. Returns the helper script
+    /// path, or the error that stopped us so the dialog can stay open and explain.
+    /// </summary>
+    public async Task<UpdatePreparation> PrepareUpdateAsync(UpdateRelease release, IProgress<UpdateProgress> progress)
+    {
+        try
+        {
+            string script = await _updates.DownloadAndStageAsync(release, progress).ConfigureAwait(false);
+            return new UpdatePreparation(script, null);
+        }
+        catch (UpdateException ex)
+        {
+            AppLog.Error("no pude preparar la actualización", ex);
+            string message = ex.Reason == UpdateFailure.NoPackageForThisBuild
+                ? _localization.T("update_no_package", new { build = _updates.Build.Describe() })
+                : _localization.T("update_failed", new { err = ex.Message });
+            return new UpdatePreparation(null, message);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("no pude preparar la actualización", ex);
+            return new UpdatePreparation(null, _localization.T("update_failed", new { err = ex.Message }));
+        }
+    }
+
+    /// <summary>Runs the staged update. The page quits the app right afterwards.</summary>
+    public void ApplyUpdate(string scriptPath) => _updates.ApplyUpdate(scriptPath);
+
+    /// <summary>
+    /// "win-x64 · with the .NET runtime" in the user's language. The update dialog
+    /// shows it so it is obvious which package is about to be downloaded.
+    /// </summary>
+    public string DescribeInstalledBuild() => _localization.T(
+        "update_target",
+        new
+        {
+            runtime = _updates.Build.RuntimeIdentifier,
+            flavor = _localization.T(_updates.Build.SelfContained
+                ? "update_flavor_selfcontained"
+                : "update_flavor_frameworkdependent"),
+        });
+
+    private void OnUpdateCheckCompleted(UpdateCheckResult result) => RunOnUi(() =>
+    {
+        if (result.Error is not null)
+        {
+            // Automatic checks stay silent: being offline is not worth a toast.
+            if (result.Manual)
+            {
+                ShowToast(_localization.T("update_check_failed", new { err = result.Error }));
+            }
+
+            return;
+        }
+
+        if (result.Release is null)
+        {
+            if (result.Manual)
+            {
+                ShowToast(_localization.T("update_up_to_date", new { version = _updates.CurrentVersion }));
+            }
+
+            return;
+        }
+
+        UpdateAvailable?.Invoke(result.Release);
+    });
 
     private void OnAsyncError(string message)
     {
@@ -1442,6 +1637,10 @@ public partial class MainViewModel : ObservableObject
         DevicesTabLabel = _localization.T("tab_devices");
         PlaybackTabLabel = _localization.T("tab_playback");
         SettingsTabLabel = _localization.T("tab_settings");
+        UpdateGroupLabel = _localization.T("update_group");
+        UpdatePolicyLabel = _localization.T("update_policy");
+        UpdatePolicyHint = _localization.T("update_policy_hint");
+        CheckNowText = _localization.T(IsCheckingUpdates ? "update_checking" : "update_check_now");
 
         _loadingLanguage = true;
         LanguageOptions.Clear();
@@ -1465,6 +1664,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         RefreshAutoConnectOptions();
+        ApplyUpdatePolicy();
 
         UpdateStatusText();
         UpdatePlayerUi();

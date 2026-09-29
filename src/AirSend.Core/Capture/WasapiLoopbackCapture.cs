@@ -42,6 +42,14 @@ public sealed class WasapiLoopbackCapture : IDisposable
 
     public string DeviceName { get; private set; } = "default render device";
 
+    /// <summary>Endpoint the caller asked for; null means "whatever Windows plays to".</summary>
+    public string? RequestedDeviceId => _deviceId;
+
+    /// <summary>Endpoint actually opened, once the capture loop resolved it.</summary>
+    public string? ResolvedDeviceId { get; private set; }
+
+    public bool FollowsSystemDefault => _deviceId is null;
+
     public bool IsRunning => _thread is { IsAlive: true };
 
     public void Start()
@@ -118,6 +126,7 @@ public sealed class WasapiLoopbackCapture : IDisposable
 
             string? deviceId = GetDeviceId(device);
             DeviceName = deviceId ?? "default render device";
+            ResolvedDeviceId = deviceId;
 
             object audioClientObject = Activate(device, typeof(IAudioClient).GUID);
             var audioClient = (IAudioClient)audioClientObject;

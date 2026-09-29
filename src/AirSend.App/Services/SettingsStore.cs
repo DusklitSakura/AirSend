@@ -50,6 +50,14 @@ public sealed class Settings
     [JsonPropertyName("auto_connect_device")]
     public PersistedDevice? AutoConnectDevice { get; set; }
 
+    /// <summary>How often to look for a new release: "startup", "daily", "weekly", "never".</summary>
+    [JsonPropertyName("update_check")]
+    public string? UpdateCheck { get; set; }
+
+    /// <summary>When the last successful update check happened, in UTC.</summary>
+    [JsonPropertyName("update_last_check")]
+    public DateTimeOffset? UpdateLastCheck { get; set; }
+
 }
 
 /// <summary>
@@ -165,6 +173,27 @@ public sealed class SettingsStore
         set
         {
             _settings.AutoConnectDevice = value;
+            Save();
+        }
+    }
+
+    /// <summary>Update check interval as stored, e.g. "startup".</summary>
+    public string? UpdateCheckPolicy
+    {
+        get => _settings.UpdateCheck;
+        set
+        {
+            _settings.UpdateCheck = string.IsNullOrWhiteSpace(value) ? null : value;
+            Save();
+        }
+    }
+
+    public DateTimeOffset? UpdateLastCheck
+    {
+        get => _settings.UpdateLastCheck;
+        set
+        {
+            _settings.UpdateLastCheck = value;
             Save();
         }
     }

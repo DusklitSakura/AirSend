@@ -57,6 +57,30 @@
                     SelectedIndex="{x:Bind ViewModel.SelectedAutoConnectIndex, Mode=TwoWay}" />
             </controls:SettingsCard>
 
+            <!--  Updates  -->
+            <TextBlock
+                Margin="4,16,0,6"
+                Style="{StaticResource BodyStrongTextBlockStyle}"
+                Text="{x:Bind ViewModel.UpdateGroupLabel, Mode=OneWay}" />
+
+            <controls:SettingsCard
+                Description="{x:Bind ViewModel.UpdatePolicyHint, Mode=OneWay}"
+                Header="{x:Bind ViewModel.UpdatePolicyLabel, Mode=OneWay}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <ComboBox
+                        AutomationProperties.AutomationId="UpdatePolicyCombo"
+                        AutomationProperties.Name="{x:Bind ViewModel.UpdatePolicyLabel, Mode=OneWay}"
+                        MinWidth="150"
+                        ItemsSource="{x:Bind ViewModel.UpdatePolicyOptions}"
+                        SelectedIndex="{x:Bind ViewModel.SelectedUpdatePolicyIndex, Mode=TwoWay}" />
+                    <Button
+                        AutomationProperties.AutomationId="CheckForUpdatesButton"
+                        Command="{x:Bind ViewModel.CheckForUpdatesCommand}"
+                        Content="{x:Bind ViewModel.CheckNowText, Mode=OneWay}"
+                        IsEnabled="{x:Bind local:ViewHelpers.Not(ViewModel.IsCheckingUpdates), Mode=OneWay}" />
+                </StackPanel>
+            </controls:SettingsCard>
+
             <!--  Audio  -->
             <TextBlock
                 Margin="4,16,0,6"

@@ -9,6 +9,12 @@
     <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
     <RootNamespace>AirSend.Core.Tests</RootNamespace>
+    <!--
+      WasapiDevices talks to the MMDevice API through hand written COM interop, so
+      the test host needs the same feature switch the app enables: without it
+      Activator.CreateInstance on the CLSID throws PlatformNotSupportedException.
+    -->
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
   </PropertyGroup>
 
   <ItemGroup>

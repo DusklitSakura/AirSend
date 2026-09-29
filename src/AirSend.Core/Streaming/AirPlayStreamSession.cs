@@ -52,6 +52,12 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
     private System.Net.Sockets.UdpClient? _controlSocket;
     private Task? _controlLoop;
     private WasapiLoopbackCapture? _capture;
+    private readonly object _captureLock = new();
+    private string? _captureDeviceId;
+    private string? _appliedCaptureDeviceId;
+    private bool _captureRequested;
+    private bool _captureClosed;
+    private int _captureRestartPending;
     private Task? _pump;
     private Task? _heartbeat;
     private long _framesSent;
@@ -598,10 +604,14 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
     {
         if (startCapture)
         {
-            _capture = new WasapiLoopbackCapture(CaptureFormat.AirPlayDefault, captureDeviceId);
-            _capture.FrameCaptured += PushPcm;
-            _capture.CaptureInterrupted += message => ErrorOccurred?.Invoke(message);
-            _capture.Start();
+            lock (_captureLock)
+            {
+                _captureRequested = true;
+                _captureDeviceId = captureDeviceId;
+                _appliedCaptureDeviceId = captureDeviceId;
+                _capture = CreateCapture(captureDeviceId);
+                _capture.Start();
+            }
         }
 
         _pump = Task.Factory.StartNew(
@@ -612,6 +622,134 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
 
         _heartbeat = Task.Run(() => HeartbeatLoop(_cts.Token), CancellationToken.None);
         AppLog.Info("bombeador de audio iniciado (captura → ALAC → RTP)");
+    }
+
+    private WasapiLoopbackCapture CreateCapture(string? deviceId)
+    {
+        var capture = new WasapiLoopbackCapture(CaptureFormat.AirPlayDefault, deviceId);
+        capture.FrameCaptured += PushPcm;
+        capture.CaptureInterrupted += message => ErrorOccurred?.Invoke(message);
+        return capture;
+    }
+
+    /// <summary>
+    /// True while the live capture takes whatever Windows is currently playing to,
+    /// i.e. the caller did not pin a specific endpoint.
+    /// </summary>
+    public bool FollowsSystemDefaultCapture
+    {
+        get
+        {
+            lock (_captureLock)
+            {
+                return _captureRequested && _appliedCaptureDeviceId is null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the WASAPI capture on <paramref name="deviceId"/> (null = follow the
+    /// system default) without touching the RTSP session, so the receiver keeps
+    /// playing out of its buffer while the new endpoint is opened.
+    /// </summary>
+    /// <remarks>
+    /// Called when the user switches the Windows output device or picks another
+    /// entry in the settings, i.e. possibly from the UI thread or from the endpoint
+    /// watcher. The rebuild itself runs on a worker thread, and only the last
+    /// requested endpoint survives a burst of changes.
+    /// </remarks>
+    public void RestartCapture(string? deviceId)
+    {
+        lock (_captureLock)
+        {
+            if (_captureClosed)
+            {
+                return;
+            }
+
+            _captureDeviceId = deviceId;
+
+            if (!_captureRequested)
+            {
+                // No capture to rebuild (test-tone sessions): keep the choice so a
+                // later stream starts from it.
+                return;
+            }
+        }
+
+        if (Interlocked.Exchange(ref _captureRestartPending, 1) == 1)
+        {
+            return;
+        }
+
+        _ = Task.Run(RebuildCapture);
+    }
+
+    private void RebuildCapture()
+    {
+        bool rebuilt = false;
+        WasapiLoopbackCapture? previous = null;
+        WasapiLoopbackCapture? replacement = null;
+        string? requested = null;
+
+        try
+        {
+            lock (_captureLock)
+            {
+                if (_captureClosed || !_captureRequested)
+                {
+                    return;
+                }
+
+                requested = _captureDeviceId;
+                replacement = CreateCapture(requested);
+                previous = _capture;
+                _capture = replacement;
+                _appliedCaptureDeviceId = requested;
+            }
+
+            // Outside the lock: stopping the previous capture joins its thread (up
+            // to two seconds), and a caller asking for yet another endpoint must not
+            // wait behind that.
+            previous?.Dispose();
+            replacement.Start();
+            rebuilt = true;
+            AppLog.Info($"captura WASAPI reconstruida: {requested ?? "salida predeterminada del sistema"}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("no pude reconstruir la captura WASAPI", ex);
+            ErrorOccurred?.Invoke($"capture_interrupted: {ex.Message}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _captureRestartPending, 0);
+
+            // A request that arrived while this rebuild was running would have been
+            // coalesced into _captureDeviceId, so run once more if they differ.
+            if (rebuilt && NeedsCaptureRebuild())
+            {
+                RestartCapture(CurrentRequestedCaptureDevice());
+            }
+        }
+    }
+
+    private bool NeedsCaptureRebuild()
+    {
+        lock (_captureLock)
+        {
+            return !_captureClosed
+                && _captureRequested
+                && !string.Equals(_appliedCaptureDeviceId, _captureDeviceId, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private string? CurrentRequestedCaptureDevice()
+    {
+        lock (_captureLock)
+        {
+            return _captureDeviceId;
+        }
     }
 
     private void PumpLoop(CancellationToken token)
@@ -805,9 +943,19 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
         }
 
         _teardownSent = true;
+
+        // No capture rebuild must be scheduled after this point, otherwise a switch
+        // that lands during teardown would open a new endpoint nobody reads from.
+        WasapiLoopbackCapture? capture;
+        lock (_captureLock)
+        {
+            _captureClosed = true;
+            capture = _capture;
+        }
+
         _cts.Cancel();
         _audioQueue.CompleteAdding();
-        _capture?.Stop();
+        capture?.Stop();
 
         try
         {

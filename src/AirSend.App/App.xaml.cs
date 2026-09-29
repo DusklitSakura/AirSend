@@ -26,6 +26,7 @@ public partial class App : Application
             Settings = new SettingsStore();
             Localization = new Localization(Settings);
             Coordinator = new AirPlayCoordinator(Settings);
+            Updates = new UpdateService(Settings);
 
             AppLog.Info(
                 $"idioma de la interfaz: {Localization.Tag} " +
@@ -81,6 +82,8 @@ public partial class App : Application
     public static Localization Localization { get; private set; } = null!;
 
     public static AirPlayCoordinator Coordinator { get; private set; } = null!;
+
+    public static UpdateService Updates { get; private set; } = null!;
 
     public static nint WindowHandle => WinRT.Interop.WindowNative.GetWindowHandle(Window);
 
@@ -145,6 +148,7 @@ public partial class App : Application
         _quitting = true;
         _tray?.Dispose();
         _tray = null;
+        Updates?.Dispose();
         Exit();
     }
 

@@ -3,10 +3,12 @@ using AirSend.Core.Logging;
 
 namespace AirSend.Core.Capture;
 
-public sealed record AudioRenderDevice(string Id, string Name, bool IsDefault)
-{
-    public string DisplayName => IsDefault ? $"{Name} (default)" : Name;
-}
+/// <summary>
+/// One entry of the playback endpoint list. <paramref name="IsDefault"/> marks the
+/// endpoint Windows currently plays to; the UI decides how to label it so the
+/// marker can be localized.
+/// </summary>
+public sealed record AudioRenderDevice(string Id, string Name, bool IsDefault);
 
 /// <summary>
 /// Enumerates the active playback endpoints so the user can pick which one to
@@ -86,6 +88,48 @@ public static class WasapiDevices
         }
 
         return devices;
+    }
+
+    /// <summary>
+    /// Endpoint id Windows is currently using for system sounds, or null when the
+    /// machine has no active playback device.
+    /// </summary>
+    public static string? GetDefaultRenderDeviceId()
+    {
+        IMMDeviceEnumerator? enumerator = null;
+        IMMDevice? device = null;
+
+        try
+        {
+            Type type = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"))
+                ?? throw new InvalidOperationException("MMDeviceEnumerator not registered");
+            enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(type)!;
+
+            if (enumerator.GetDefaultAudioEndpoint(DataFlowRender, RoleConsole, out IMMDevice resolved) != 0)
+            {
+                return null;
+            }
+
+            device = resolved;
+            return GetId(resolved);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidCastException or InvalidOperationException or NotSupportedException)
+        {
+            AppLog.Warn($"no pude leer la salida predeterminada: {ex.Message}");
+            return null;
+        }
+        finally
+        {
+            if (device is not null)
+            {
+                Marshal.ReleaseComObject(device);
+            }
+
+            if (enumerator is not null)
+            {
+                Marshal.ReleaseComObject(enumerator);
+            }
+        }
     }
 
     private static string? GetId(IMMDevice device)

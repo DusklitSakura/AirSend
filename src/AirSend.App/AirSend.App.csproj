@@ -7,9 +7,9 @@
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <RootNamespace>AirSend</RootNamespace>
     <AssemblyName>AirSend</AssemblyName>
-    <Version>0.2.0</Version>
-    <FileVersion>0.2.0.0</FileVersion>
-    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <Version>0.2.1</Version>
+    <FileVersion>0.2.1.0</FileVersion>
+    <AssemblyVersion>0.2.1.0</AssemblyVersion>
     <Product>AirSend</Product>
     <Description>Send Windows system audio to an AirPlay 2 receiver (HomePod) — WinUI 3 port of Pabldi08/AirSend.</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -71,15 +71,42 @@
   </ItemGroup>
 
   <!--
+    The updater must fetch the package that matches this installation exactly:
+    same architecture, same flavour (with or without the bundled .NET runtime) and
+    the same version. All three are known while building, so they are written next
+    to the executable instead of being guessed from the file layout at runtime.
+  -->
+  <Target Name="WriteBuildInfo" AfterTargets="Build">
+    <PropertyGroup>
+      <BuildInfoRuntime Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</BuildInfoRuntime>
+      <BuildInfoRuntime Condition="'$(BuildInfoRuntime)' == ''">$(NETCoreSdkRuntimeIdentifier)</BuildInfoRuntime>
+      <BuildInfoFlavor Condition="'$(SelfContained)' == 'true'">selfcontained</BuildInfoFlavor>
+      <BuildInfoFlavor Condition="'$(BuildInfoFlavor)' == ''">frameworkdependent</BuildInfoFlavor>
+    </PropertyGroup>
+    <ItemGroup>
+      <BuildInfoLine Include="version=$(Version)" />
+      <BuildInfoLine Include="runtime=$(BuildInfoRuntime)" />
+      <BuildInfoLine Include="flavor=$(BuildInfoFlavor)" />
+    </ItemGroup>
+    <WriteLinesToFile
+      File="$(OutDir)build-info.txt"
+      Lines="@(BuildInfoLine)"
+      Overwrite="true"
+      WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!--
     `dotnet publish` for an unpackaged WinUI 3 app copies neither the compiled
     XAML (.xbf) nor the resource index (<AssemblyName>.pri); without them the
     published layout throws XamlParseException when the first window loads.
     Copying them alongside the executable makes bin/ and publish/ equivalent.
+    build-info.txt travels with them: it tells the updater what this copy is.
   -->
   <Target Name="CopyXamlResourcesToPublish" AfterTargets="Publish">
     <ItemGroup>
       <XamlResourceFile Include="$(OutDir)*.xbf" />
       <XamlResourceFile Include="$(OutDir)$(AssemblyName).pri" />
+      <XamlResourceFile Include="$(OutDir)build-info.txt" />
     </ItemGroup>
     <Copy SkipUnchangedFiles="true" SourceFiles="@(XamlResourceFile)" DestinationFolder="$(PublishDir)" />
   </Target>

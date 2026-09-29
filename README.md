@@ -34,6 +34,8 @@ RTP 与 ChaCha20-Poly1305 的加密格式、ALAC 帧与 magic cookie、NTP 授�
   路由器不转发 mDNS 时可以手动填 `IP[:端口]` 添加。
 - **音频链路** —— WASAPI loopback 采集系统声音 → ALAC 编码 → ChaCha20-Poly1305 加密的
   RTP，带 NTP 授时与同步包。
+- **采集来源** —— 默认跟随系统的播放设备；在 Windows 里换输出设备（比如从扬声器切到耳机）
+  会自己跟着换，也可以固定成某一个设备。
 - **配对** —— 瞬态 pair-setup（SRP-6a，3072 位群 / SHA-512）加 pair-verify
   （Curve25519 + Ed25519），之后的 RTSP 全程加密。
 - **托盘** —— 关掉窗口不退出，缩在托盘里继续放。
@@ -49,6 +51,9 @@ RTP 与 ChaCha20-Poly1305 的加密格式、ALAC 帧与 magic cookie、NTP 授�
   用来确认声音真的过去了；没有对应语音包时退回 440 Hz 提示音。
 - **单实例** —— 重复启动只是把已有窗口叫到前面。
 - **开机自启动** —— 可选，配合「启动时自动连接」，登录后就能直接开始推流。
+- **自动更新** —— 可选启动时 / 每天 / 每周检查 GitHub 上的新版本（也可以设成完全不查）。
+  发现新版本会先给你看更新内容，确认后才下载：按本机实际装的架构和「带不带运行时」挑包，
+  下完再核对一遍包里的版本信息，然后退出程序、替换文件、自动重开。
 - **中文界面** —— 中英西三种语言，首次启动跟随系统语言。
 - **界面重写** —— 竖排导航加 WinUI 官方的 SettingsCard（原版是单个 WebView 页面）。
 - **zip 分发** —— 解压后跑 `AirSend.exe` 就行，不装 MSIX、不装安装器、不用开发者模式
@@ -78,8 +83,8 @@ RTP 与 ChaCha20-Poly1305 的加密格式、ALAC 帧与 magic cookie、NTP 授�
 2. 点设备的「连接」——弹窗会问要不要马上开始推送。选「开始发送」就立刻把电脑声音送过去，
    选「稍后」则只保持连接。
 3. **播放**页：播放/停止、音量、连接测试语音、AirPlay 缓冲区上限。
-4. **设置**页：界面语言、启动时自动连接（可以指定设备）、开机自启动、采集来源、
-   日志与诊断、关于。
+4. **设置**页：界面语言、启动时自动连接（可以指定设备）、开机自启动、检查更新、
+   采集来源、日志与诊断、关于。
 
 几个容易踩的点：
 
@@ -139,7 +144,7 @@ src/AirSend.App           WinUI 3 界面：设备 / 播放 / 设置三个页面�
 src/AirSend.Core          协议与音频核心：mDNS 发现、RTSP 与二进制 plist、SRP-6a、
                           X25519 / Ed25519、ALAC 编码、ChaCha20-Poly1305、RTP、
                           NTP 授时、WASAPI 采集
-tests/AirSend.Core.Tests  59 项单元测试
+tests/AirSend.Core.Tests  122 项单元测试
 docs/screenshots          界面截图
 PORTING.md                与上游 Rust 版本的逐模块对照、验证记录、已知限制
 build-release.ps1         打 zip 的脚本
@@ -147,12 +152,13 @@ build-release.ps1         打 zip 的脚本
 
 ## 验证到什么程度
 
-`dotnet test` 的 59 项测试覆盖：X25519（RFC 7748）、Ed25519（RFC 8032）、SRP-6a
+`dotnet test` 的 122 项测试覆盖：X25519（RFC 7748）、Ed25519（RFC 8032）、SRP-6a
 （与一份独立的 Python 实现逐字节比对）、HKDF-SHA512、TLV8、ChaCha20-Poly1305 通道、
 二进制 plist（用 Python `plistlib` 交叉验证互通性）、RTSP 客户端（含加密响应）、
 mDNS 报文解析（PTR / SRV / TXT / A）、设备归并、延迟映射、ALAC 帧往返（编码器对比
 一个按 ffmpeg `libavcodec/alac.c` 的解码流程重写、只用于测试的解码器），以及对着一个
-脚本化的模拟接收器跑通的完整握手。
+脚本化的模拟接收器跑通的完整握手、系统输出设备切换的检测，以及更新检查的版本比较、
+检查周期、按架构 / 运行时 / 版本挑选安装包、下错包时的校验拒绝、下载中断后续传。
 
 真机这边（HomePod gen 2）验过：设备发现、瞬态配对、加密 RTSP、SETUP / RECORD、
 音量读回、NTP 授时、能听见的声音、连接测试语音。细节和排查过程都记在
@@ -185,4 +191,7 @@ language, tray plus close-to-tray, single instance and start-with-Windows.
   them to a release for any `v*` tag.
 - **Verified** on a real HomePod gen 2: discovery, pairing, SETUP/RECORD, audible audio, volume
   read-back and the spoken connection test. Details in [PORTING.md](PORTING.md).
+- **Updates**: AirSend can check GitHub Releases at startup, daily or weekly (or never), shows the
+  release notes first, then downloads the package matching this installation and restarts to
+  install it.
 - **License**: GPL-3.0-or-later, same as the upstream project. See [CREDITS.md](CREDITS.md).
