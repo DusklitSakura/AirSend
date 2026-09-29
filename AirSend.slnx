@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AirSend.App/AirSend.App.csproj" />
+    <Project Path="src/AirSend.Core/AirSend.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AirSend.Core.Tests/AirSend.Core.Tests.csproj" />
+  </Folder>
+</Solution>

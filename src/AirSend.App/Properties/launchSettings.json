@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "AirSend.App (Unpackaged)": {
+      "commandName": "Project",
+      "nativeDebugging": false
+    }
+  }
+}

@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+artifacts/
+
+# IDE / tooling
+.vs/
+*.user
+*.suo
+*.userprefs
+
+# Runtime data that may land next to the executable
+logs/
+startup-error.log
+
+# OS noise
+Thumbs.db
+Desktop.ini
+.DS_Store

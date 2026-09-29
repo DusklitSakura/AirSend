@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="AirSend.Views.PlaybackView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:local="using:AirSend.Views"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <ScrollViewer x:Name="PlaybackScroller" VerticalScrollBarVisibility="Auto">
+        <StackPanel Padding="24,8,24,24" Spacing="4">
+
+            <!--  Page header  -->
+            <TextBlock
+                Margin="4,8,0,0"
+                Style="{StaticResource SubtitleTextBlockStyle}"
+                Text="{x:Bind ViewModel.PlaybackTitle, Mode=OneWay}" />
+            <TextBlock
+                Margin="4,0,0,10"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Style="{StaticResource CaptionTextBlockStyle}"
+                Text="{x:Bind ViewModel.PlaybackDescription, Mode=OneWay}"
+                TextWrapping="Wrap" />
+
+            <!--  Current target device (the header answers "what am I controlling?")  -->
+            <controls:SettingsCard
+                Description="{x:Bind ViewModel.CurrentDeviceMeta, Mode=OneWay}"
+                Header="{x:Bind ViewModel.CurrentDeviceName, Mode=OneWay}"
+                Visibility="{x:Bind local:ViewHelpers.ToVisibility(ViewModel.IsPlayerVisible), Mode=OneWay}">
+                <controls:SettingsCard.HeaderIcon>
+                    <FontIcon Glyph="&#xE767;" />
+                </controls:SettingsCard.HeaderIcon>
+                <StackPanel
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    VerticalAlignment="Center">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Text="{x:Bind ViewModel.PlayerStatusText, Mode=OneWay}" />
+                    <Button
+                        MinWidth="150"
+                        AutomationProperties.Name="{x:Bind ViewModel.PlayButtonText, Mode=OneWay}"
+                        Command="{x:Bind ViewModel.TogglePlayCommand}"
+                        IsEnabled="{x:Bind ViewModel.CanTogglePlay, Mode=OneWay}"
+                        Style="{StaticResource AccentButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon
+                                FontSize="14"
+                                Glyph="{x:Bind ViewModel.PlayButtonGlyph, Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind ViewModel.PlayButtonText, Mode=OneWay}" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </controls:SettingsCard>
+
+            <!--  No device: send the user to the devices tab  -->
+            <Border
+                Margin="0,4,0,0"
+                Padding="20"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="4"
+                Visibility="{x:Bind local:ViewHelpers.ToInverseVisibility(ViewModel.IsPlayerVisible), Mode=OneWay}">
+                <StackPanel Spacing="10">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon
+                            FontSize="18"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Glyph="&#xE767;" />
+                        <TextBlock
+                            Style="{StaticResource BodyStrongTextBlockStyle}"
+                            Text="{x:Bind ViewModel.CurrentDeviceName, Mode=OneWay}" />
+                    </StackPanel>
+                    <TextBlock
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Text="{x:Bind ViewModel.PlaybackNoDeviceDescription, Mode=OneWay}"
+                        TextWrapping="Wrap" />
+                    <Button
+                        HorizontalAlignment="Left"
+                        Command="{x:Bind ViewModel.GoToDevicesCommand}"
+                        Content="{x:Bind ViewModel.GoToDevicesText, Mode=OneWay}"
+                        Style="{StaticResource AccentButtonStyle}" />
+                </StackPanel>
+            </Border>
+
+            <!--  Volume  -->
+            <controls:SettingsCard
+                Header="{x:Bind ViewModel.VolumeLabel, Mode=OneWay}"
+                Visibility="{x:Bind local:ViewHelpers.ToVisibility(ViewModel.IsPlayerVisible), Mode=OneWay}">
+                <StackPanel
+                    Orientation="Horizontal"
+                    Spacing="10"
+                    VerticalAlignment="Center">
+                    <Slider
+                        x:Name="VolumeSlider"
+                        Width="220"
+                        Maximum="100"
+                        Minimum="0"
+                        StepFrequency="1"
+                        VerticalAlignment="Center"
+                        Value="{x:Bind ViewModel.VolumePercent, Mode=TwoWay}" />
+                    <TextBlock
+                        MinWidth="44"
+                        VerticalAlignment="Center"
+                        Text="{x:Bind ViewModel.VolumeText, Mode=OneWay}"
+                        TextAlignment="Right" />
+                </StackPanel>
+            </controls:SettingsCard>
+
+            <!--  Test tone  -->
+            <controls:SettingsCard
+                Description="{x:Bind ViewModel.TestToneDescription, Mode=OneWay}"
+                Header="{x:Bind ViewModel.TestToneTitle, Mode=OneWay}"
+                Visibility="{x:Bind local:ViewHelpers.ToVisibility(ViewModel.IsPlayerVisible), Mode=OneWay}">
+                <StackPanel Spacing="6" VerticalAlignment="Center">
+                    <Button
+                        HorizontalAlignment="Right"
+                        Command="{x:Bind ViewModel.PlayTestToneCommand}"
+                        Content="{x:Bind ViewModel.TestToneText, Mode=OneWay}"
+                        IsEnabled="{x:Bind ViewModel.CanPlayTestTone, Mode=OneWay}" />
+                    <TextBlock
+                        HorizontalAlignment="Right"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        Text="{x:Bind ViewModel.TestToneHint, Mode=OneWay}"
+                        Visibility="{x:Bind local:ViewHelpers.ToVisibility(ViewModel.IsTestToneHintVisible), Mode=OneWay}" />
+                </StackPanel>
+            </controls:SettingsCard>
+
+            <!--  Buffer limit  -->
+            <controls:SettingsCard
+                Description="{x:Bind ViewModel.LatencyHint, Mode=OneWay}"
+                Header="{x:Bind ViewModel.LatencyLabel, Mode=OneWay}"
+                Visibility="{x:Bind local:ViewHelpers.ToVisibility(ViewModel.IsPlayerVisible), Mode=OneWay}">
+                <StackPanel Spacing="8" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Slider
+                            Width="220"
+                            Maximum="3000"
+                            Minimum="100"
+                            SnapsTo="StepValues"
+                            StepFrequency="100"
+                            VerticalAlignment="Center"
+                            Value="{x:Bind ViewModel.LatencyMs, Mode=TwoWay}" />
+                        <TextBlock
+                            MinWidth="70"
+                            VerticalAlignment="Center"
+                            Text="{x:Bind ViewModel.LatencyText, Mode=OneWay}"
+                            TextAlignment="Right" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button
+                            Command="{x:Bind ViewModel.ConfirmLatencyCommand}"
+                            Content="{x:Bind ViewModel.LatencyConfirmText, Mode=OneWay}"
+                            IsEnabled="{x:Bind ViewModel.CanConfirmLatency, Mode=OneWay}" />
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Text="{x:Bind ViewModel.LatencyStatusText, Mode=OneWay}" />
+                    </StackPanel>
+                </StackPanel>
+            </controls:SettingsCard>
+
+            <!--  Non-blocking hint when the volume drops into the "barely audible" range.  -->
+            <TeachingTip
+                IsLightDismissEnabled="True"
+                IsOpen="{x:Bind ViewModel.IsLowVolumeTipOpen, Mode=TwoWay}"
+                PreferredPlacement="Top"
+                Subtitle="{x:Bind ViewModel.LowVolumeMessage, Mode=OneWay}"
+                Target="{x:Bind VolumeSlider}"
+                Title="{x:Bind ViewModel.LowVolumeTitle, Mode=OneWay}" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

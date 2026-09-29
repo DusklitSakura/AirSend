@@ -1,0 +1,137 @@
+name: build
+
+# Builds and tests the app, then produces six ready-to-ship zip packages:
+#   {self-contained, framework-dependent} x {win-x86, win-x64, win-arm64}
+#
+# No MSIX packaging, no code signing and no Developer Mode are involved: the app
+# is an unpackaged WinUI 3 desktop app that is distributed as a plain zip.
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: unit tests
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore AirSend.slnx
+
+      - name: Test
+        run: dotnet test tests/AirSend.Core.Tests/AirSend.Core.Tests.csproj -c Release --no-restore --logger "console;verbosity=normal"
+
+  package:
+    name: ${{ matrix.target.rid }} · ${{ matrix.flavor }}
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [ selfcontained, frameworkdependent ]
+        target:
+          - { rid: win-x64,   platform: x64,   arch: x64 }
+          - { rid: win-x86,   platform: x86,   arch: x86 }
+          - { rid: win-arm64, platform: ARM64, arch: arm64 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Read app version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path src/AirSend.App/AirSend.App.csproj -Pattern '<Version>(.*)</Version>').Matches.Groups[1].Value
+          if (-not $version) { $version = '0.0.0' }
+          "value=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "AirSend $version"
+
+      - name: Publish ${{ matrix.flavor }}
+        shell: pwsh
+        run: |
+          $selfContained = '${{ matrix.flavor }}' -eq 'selfcontained'
+          $out = "publish/${{ matrix.target.rid }}-${{ matrix.flavor }}"
+          $zip = "AirSend-${{ steps.version.outputs.value }}-${{ matrix.target.rid }}-${{ matrix.flavor }}.zip"
+
+          dotnet publish src/AirSend.App/AirSend.App.csproj `
+            -c Release `
+            -r ${{ matrix.target.rid }} `
+            --self-contained $($selfContained.ToString().ToLowerInvariant()) `
+            -p:WindowsAppSDKSelfContained=$($selfContained.ToString().ToLowerInvariant()) `
+            -p:PublishTrimmed=false `
+            -p:PublishReadyToRun=false `
+            -p:PublishSingleFile=false `
+            -p:Platform=${{ matrix.target.platform }} `
+            -o $out
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
+
+          Copy-Item LICENSE, README.md $out -Force
+          Compress-Archive -Path "$out/*" -DestinationPath $zip -CompressionLevel Optimal
+
+          $size = [Math]::Round((Get-Item $zip).Length / 1MB, 1)
+          Write-Host "packaged $zip ($size MB)"
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+          "size=$size" >> $env:GITHUB_OUTPUT
+        id: publish
+
+      - name: Upload ${{ matrix.target.rid }} · ${{ matrix.flavor }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: AirSend-${{ matrix.target.rid }}-${{ matrix.flavor }}
+          path: ${{ steps.publish.outputs.zip }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: attach packages to the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true

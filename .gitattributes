@@ -1,0 +1,13 @@
+# Keep C# and XAML sources as text with consistent endings across platforms.
+* text=auto eol=lf
+
+*.cs      text diff=csharp
+*.xaml    text
+*.csproj  text
+*.slnx    text
+*.ps1     text eol=crlf
+*.md      text
+
+*.ico     binary
+*.png     binary
+*.zip     binary

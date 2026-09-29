@@ -1,0 +1,87 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <RootNamespace>AirSend</RootNamespace>
+    <AssemblyName>AirSend</AssemblyName>
+    <Version>0.2.0</Version>
+    <FileVersion>0.2.0.0</FileVersion>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <Product>AirSend</Product>
+    <Description>Send Windows system audio to an AirPlay 2 receiver (HomePod) — WinUI 3 port of Pabldi08/AirSend.</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="Exists('Assets\AppIcon.ico')">Assets\AppIcon.ico</ApplicationIcon>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <!--
+      Distribution: unpackaged (no MSIX). The app ships as a folder and is
+      distributed as a .zip archive, so no package identity, no sideloading and
+      no Developer Mode are required on the target machine.
+    -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishSingleFile>false</PublishSingleFile>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
+    <AppxPackage>false</AppxPackage>
+    <!--
+      The Windows App SDK content glob only ever copies to bin/, never to the
+      publish folder, which leaves the zip without its assets and makes XAML fail
+      to parse on a clean machine. Declaring the single asset we ship explicitly
+      (see the Content item below) keeps bin/ and publish/ identical.
+    -->
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Icon used by the title bar, the window and the tray. The tile/splash
+         images the template generated are MSIX-only and intentionally unused. -->
+    <Content Include="Assets\AppIcon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" Version="8.2.251219" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="System.Speech" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AirSend.Core\AirSend.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    `dotnet publish` for an unpackaged WinUI 3 app copies neither the compiled
+    XAML (.xbf) nor the resource index (<AssemblyName>.pri); without them the
+    published layout throws XamlParseException when the first window loads.
+    Copying them alongside the executable makes bin/ and publish/ equivalent.
+  -->
+  <Target Name="CopyXamlResourcesToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <XamlResourceFile Include="$(OutDir)*.xbf" />
+      <XamlResourceFile Include="$(OutDir)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Copy SkipUnchangedFiles="true" SourceFiles="@(XamlResourceFile)" DestinationFolder="$(PublishDir)" />
+  </Target>
+
+</Project>
