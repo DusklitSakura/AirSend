@@ -28,7 +28,18 @@ public static partial class UpdateNotes
                 continue;
             }
 
-            if (trimmed.StartsWith('#'))
+            if (IsTableRow(trimmed, out string[] cells))
+            {
+                // "| a | b |" and the "|---|---|" underline that follows it: the
+                // dialog has no table renderer, so rows become "a — b".
+                if (cells.All(cell => cell.Length > 0 && cell.All(character => character is '-' or ':')))
+                {
+                    continue;
+                }
+
+                line = string.Join(" — ", cells.Where(cell => cell.Length > 0));
+            }
+            else if (trimmed.StartsWith('#'))
             {
                 line = trimmed.TrimStart('#').TrimStart();
             }
@@ -37,7 +48,12 @@ public static partial class UpdateNotes
                 line = "• " + trimmed[2..].TrimStart();
             }
 
-            builder.AppendLine(InlineSyntax().Replace(line, "$1").Replace("**", string.Empty).Replace('`', ' '));
+            // Inline code keeps its text, only the delimiters go: "`AirSend.exe`" is
+            // an executable name, not something to pad with spaces.
+            builder.AppendLine(InlineSyntax()
+                .Replace(line, "$1")
+                .Replace("**", string.Empty)
+                .Replace("`", string.Empty));
         }
 
         string text = builder.ToString();
@@ -47,6 +63,18 @@ public static partial class UpdateNotes
         }
 
         return text.Trim();
+    }
+
+    private static bool IsTableRow(string line, out string[] cells)
+    {
+        cells = [];
+        if (line.Length < 2 || line[0] != '|' || line[^1] != '|')
+        {
+            return false;
+        }
+
+        cells = [.. line.Trim('|').Split('|').Select(cell => cell.Trim())];
+        return true;
     }
 
     [GeneratedRegex(@"\[([^\]]+)\]\(([^)]+)\)")]

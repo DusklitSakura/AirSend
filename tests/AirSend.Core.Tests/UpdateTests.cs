@@ -365,6 +365,18 @@ public class UpdateNotesTests
     {
         Assert.Equal(string.Empty, UpdateNotes.ToPlainText(markdown));
     }
+
+    [Fact]
+    public void TurnsTablesIntoReadableLines()
+    {
+        string plain = UpdateNotes.ToPlainText(
+            "| 包 | 适合 |\n|---|---|\n| `AirSend-0.2.1-win-x64-selfcontained.zip` | 普通电脑 |\n");
+
+        Assert.DoesNotContain("|", plain);
+        Assert.DoesNotContain("---", plain);
+        Assert.Contains("包 — 适合", plain);
+        Assert.Contains("AirSend-0.2.1-win-x64-selfcontained.zip — 普通电脑", plain);
+    }
 }
 
 public class UpdateDownloadTests : IDisposable
