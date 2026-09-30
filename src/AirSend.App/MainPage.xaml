@@ -53,6 +53,6 @@
             IsClosable="False"
             IsOpen="{x:Bind ViewModel.IsToastVisible, Mode=OneWay}"
             Message="{x:Bind ViewModel.ToastMessage, Mode=OneWay}"
-            Severity="Error" />
+            Severity="{x:Bind ViewModel.ToastSeverity, Mode=OneWay}" />
     </Grid>
 </Page>

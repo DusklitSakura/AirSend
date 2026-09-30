@@ -7,9 +7,9 @@
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <RootNamespace>AirSend</RootNamespace>
     <AssemblyName>AirSend</AssemblyName>
-    <Version>0.2.3</Version>
-    <FileVersion>0.2.3.0</FileVersion>
-    <AssemblyVersion>0.2.3.0</AssemblyVersion>
+    <Version>0.2.4</Version>
+    <FileVersion>0.2.4.0</FileVersion>
+    <AssemblyVersion>0.2.4.0</AssemblyVersion>
     <Product>AirSend</Product>
     <Description>Send Windows system audio to an AirPlay 2 receiver (HomePod) — WinUI 3 port of Pabldi08/AirSend.</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>

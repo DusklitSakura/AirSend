@@ -11,6 +11,7 @@ using AirSend.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml.Controls;
 
 namespace AirSend.ViewModels;
 
@@ -467,6 +468,13 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     public partial string ToastMessage { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Severity of the toast, so "updated to 0.2.3" does not look like a failure:
+    /// the info bar colours itself from this (informational / success / warning / error).
+    /// </summary>
+    [ObservableProperty]
+    public partial InfoBarSeverity ToastSeverity { get; set; } = InfoBarSeverity.Informational;
+
     [ObservableProperty]
     public partial bool IsToastVisible { get; set; }
 
@@ -510,12 +518,12 @@ public partial class MainViewModel : ObservableObject
         if (outcome.Succeeded)
         {
             AppLog.Info("log.update.applied", new { version = outcome.Version ?? "?" });
-            RunOnUi(() => ShowToast(_localization.T("update_applied_toast", new { version = outcome.Version ?? "?" })));
+            RunOnUi(() => ShowToast(_localization.T("update_applied_toast", new { version = outcome.Version ?? "?" }), InfoBarSeverity.Success));
             return;
         }
 
         AppLog.Warn("log.update.apply_failed", new { err = outcome.Error ?? "?" });
-        RunOnUi(() => ShowToast(_localization.T("update_failed_toast", new { err = outcome.Error ?? "?" })));
+        RunOnUi(() => ShowToast(_localization.T("update_failed_toast", new { err = outcome.Error ?? "?" }), InfoBarSeverity.Error));
     }
 
     /// <summary>
@@ -643,7 +651,7 @@ public partial class MainViewModel : ObservableObject
             }
             catch (Exception ex) when (ex is AirPlayProbeException or ManualEndpointException or FormatException)
             {
-                RunOnUi(() => ShowToast(_localization.T("cant_find", new { name = last.Name, err = AirSendError.Describe(ex) })));
+                RunOnUi(() => ShowToast(_localization.T("cant_find", new { name = last.Name, err = AirSendError.Describe(ex) }), InfoBarSeverity.Error));
                 return;
             }
         }
@@ -1004,7 +1012,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            RunOnUi(() => ShowToast(_localization.T("latency_error", new { err = AirSendError.Describe(ex) })));
+            RunOnUi(() => ShowToast(_localization.T("latency_error", new { err = AirSendError.Describe(ex) }), InfoBarSeverity.Error));
         }
         finally
         {
@@ -1126,7 +1134,7 @@ public partial class MainViewModel : ObservableObject
             AirPlayStreamSession? session = _coordinator.ActiveSessions.FirstOrDefault();
             if (session is null)
             {
-                RunOnUi(() => ShowToast(_localization.T("error_prefix", new { err = _localization.T("player_starting") })));
+                RunOnUi(() => ShowToast(_localization.T("error_prefix", new { err = _localization.T("player_starting") }), InfoBarSeverity.Error));
                 return;
             }
 
@@ -1148,7 +1156,7 @@ public partial class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             AppLog.Error("log.tone.failed", ex);
-            RunOnUi(() => ShowToast(_localization.T("error_prefix", new { err = AirSendError.Describe(ex) })));
+            RunOnUi(() => ShowToast(_localization.T("error_prefix", new { err = AirSendError.Describe(ex) }), InfoBarSeverity.Error));
         }
         finally
         {
@@ -1227,7 +1235,7 @@ public partial class MainViewModel : ObservableObject
 
             AppLog.Warn("log.busy.watchdog", new { minutes = (int)BusyWatchdog.TotalMinutes });
         IsBusy = false;
-        ShowToast(_localization.T("busy_timeout"));
+        ShowToast(_localization.T("busy_timeout"), InfoBarSeverity.Warning);
     }
 
     public void RequestShowHideWindow() => WindowToggleRequested?.Invoke();
@@ -1366,7 +1374,7 @@ public partial class MainViewModel : ObservableObject
                 _loadingStartup = true;
                 StartWithWindows = !value;
                 _loadingStartup = false;
-                ShowToast(_localization.T("settings_startup_failed", new { err = AirSendError.Describe(ex) }));
+                ShowToast(_localization.T("settings_startup_failed", new { err = AirSendError.Describe(ex) }), InfoBarSeverity.Error);
             });
         }
     }
@@ -1614,7 +1622,7 @@ public partial class MainViewModel : ObservableObject
             // Automatic checks stay silent: being offline is not worth a toast.
             if (result.Manual)
             {
-                ShowToast(_localization.T("update_check_failed", new { err = result.Error }));
+                ShowToast(_localization.T("update_check_failed", new { err = result.Error }), InfoBarSeverity.Error);
             }
 
             return;
@@ -1638,7 +1646,7 @@ public partial class MainViewModel : ObservableObject
         RunOnUi(() =>
         {
             // Core already resolved this text in the interface language.
-            ShowToast(message);
+            ShowToast(message, InfoBarSeverity.Error);
 
             if (IsPlaying)
             {
@@ -1912,9 +1920,10 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private void ShowToast(string message)
+    private void ShowToast(string message, InfoBarSeverity severity = InfoBarSeverity.Informational)
     {
         ToastMessage = message;
+        ToastSeverity = severity;
         IsToastVisible = true;
 
         _ = Task.Run(async () =>
