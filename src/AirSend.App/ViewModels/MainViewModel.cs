@@ -1,3 +1,4 @@
+using AirSend.Core;
 using System.Collections.ObjectModel;
 using System.Net;
 using AirSend.Core.Discovery;
@@ -26,6 +27,15 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Volume (in percent) at or below which the "barely audible" hint appears.</summary>
     public const int QuietVolumeThreshold = 5;
 
+    /// <summary>
+    /// How long one busy operation may keep the playback controls disabled before the
+    /// UI unlocks itself. Every operation here is bounded by seconds (connect retries,
+    /// a latency re-setup, sending a test tone), so this only fires when something is
+    /// genuinely stuck — a stalled socket or a speech engine that never answers — which
+    /// used to leave the window with every control greyed out and no way back.
+    /// </summary>
+    private static readonly TimeSpan BusyWatchdog = TimeSpan.FromMinutes(3);
+
     private static readonly TimeSpan QuietHintDuration = TimeSpan.FromSeconds(5);
 
     private readonly AirPlayCoordinator _coordinator;
@@ -52,6 +62,7 @@ public partial class MainViewModel : ObservableObject
     private bool _suppressVolumeHandling;
     private double _appliedVolumePercent;
     private int _quietHintToken;
+    private DateTimeOffset? _busySince;
 
     /// <summary>Order of the update-interval picker; index ↔ policy.</summary>
     private static readonly UpdateCheckInterval[] UpdateIntervals =
@@ -157,7 +168,7 @@ public partial class MainViewModel : ObservableObject
             catch (Exception ex)
             {
                 // A dialog that cannot be shown must not block playback.
-                AppLog.Warn($"no pude mostrar el diálogo: {ex.Message}");
+                AppLog.Warn("log.dialog.failed", new { err = AirSendError.Describe(ex) });
                 completion.SetResult(new ConfirmationResult(true, false));
             }
         });
@@ -495,13 +506,13 @@ public partial class MainViewModel : ObservableObject
             if (StartWithWindows && !StartupRegistration.IsCurrentExecutableRegistered())
             {
                 StartupRegistration.SetEnabled(true);
-                AppLog.Info("ruta de inicio automático actualizada a la copia actual");
+                AppLog.Info("log.startup.updated");
             }
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException
                                        or IOException or InvalidOperationException)
         {
-            AppLog.Warn($"no pude leer el inicio automático: {ex.Message}");
+            AppLog.Warn("log.startup.read_failed", new { err = AirSendError.Describe(ex) });
             StartWithWindows = false;
         }
         finally
@@ -607,7 +618,7 @@ public partial class MainViewModel : ObservableObject
             }
             catch (Exception ex) when (ex is AirPlayProbeException or ManualEndpointException or FormatException)
             {
-                RunOnUi(() => ShowToast(_localization.T("cant_find", new { name = last.Name, err = ex.Message })));
+                RunOnUi(() => ShowToast(_localization.T("cant_find", new { name = last.Name, err = AirSendError.Describe(ex) })));
                 return;
             }
         }
@@ -747,7 +758,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            RunOnUi(() => StatusText = _localization.T("error_prefix", new { err = ex.Message }));
+            RunOnUi(() => StatusText = _localization.T("error_prefix", new { err = AirSendError.Describe(ex) }));
         }
         finally
         {
@@ -812,7 +823,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            RunOnUi(() => StatusText = _localization.T("error_prefix", new { err = ex.Message }));
+            RunOnUi(() => StatusText = _localization.T("error_prefix", new { err = AirSendError.Describe(ex) }));
         }
         finally
         {
@@ -864,7 +875,7 @@ public partial class MainViewModel : ObservableObject
                 _activeRouteKeys.Clear();
                 _activeRouteKeys.Add(device.GroupKey);
                 PlayerStatusText = _localization.T("player_playing");
-                AppLog.Info($"reproduciendo en {info.Name} ({info.Ip}:{info.Port})");
+                AppLog.Info("log.playback.started", new { name = info.Name, ip = info.Ip, port = info.Port });
 
                 // The receiver may already have its own volume (set from the HomePod
                 // or another sender): mirror that instead of forcing our own.
@@ -877,7 +888,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            RunOnUi(() => PlayerStatusText = _localization.T("error_prefix", new { err = ex.Message }));
+            RunOnUi(() => PlayerStatusText = _localization.T("error_prefix", new { err = AirSendError.Describe(ex) }));
         }
         finally
         {
@@ -925,7 +936,7 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        throw lastError ?? new StreamingException("dispositivo sin dirección IP");
+        throw lastError ?? new StreamingException("error.stream.no_route");
     }
 
     [RelayCommand]
@@ -968,7 +979,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            RunOnUi(() => ShowToast(_localization.T("latency_error", new { err = ex.Message })));
+            RunOnUi(() => ShowToast(_localization.T("latency_error", new { err = AirSendError.Describe(ex) })));
         }
         finally
         {
@@ -1009,7 +1020,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            RunOnUi(() => ManualStatus = ex.Message);
+            RunOnUi(() => ManualStatus = AirSendError.Describe(ex));
         }
         finally
         {
@@ -1041,6 +1052,13 @@ public partial class MainViewModel : ObservableObject
     /// path works before debugging anything else (the Rust build has the same
     /// helper as a CLI example).
     /// </summary>
+    /// <remarks>
+    /// Everything runs under one try/finally. A leaked <see cref="IsBusy"/> flag is
+    /// not a cosmetic problem: the play/stop button, the test tone and every device
+    /// button (including disconnect) are gated on it, so the whole window would stay
+    /// greyed out with no way back short of killing the app. That is exactly what a
+    /// SAPI call that never returned used to cause.
+    /// </remarks>
     [RelayCommand]
     private async Task PlayTestToneAsync()
     {
@@ -1049,49 +1067,37 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        // Synthesize first: the very first call loads the speech engine, and doing it
-        // before playback starts keeps that latency out of the "sending" state.
-        RunOnUi(() =>
-        {
-            IsBusy = true;
-            PlayerStatusText = _localization.T("tone_playing");
-            UpdatePlayerUi();
-            UpdateDeviceButtons();
-        });
-
-        string sentence = _localization.T("test_speech_text");
-        (short[] Samples, int SampleRate, int Channels)? clip =
-            await Task.Run(() => SpeechTestClip.TrySynthesize(sentence, _localization.Tag)).ConfigureAwait(false);
-
-        RunOnUi(() =>
-        {
-            IsBusy = false;
-            UpdatePlayerUi();
-            UpdateDeviceButtons();
-        });
-
-        // The tone travels through the live stream, so start playback first when the
-        // user has only connected the device. TogglePlayAsync manages IsBusy itself,
-        // so it must not be called while this method already holds the busy flag.
-        if (!IsPlaying)
-        {
-            await TogglePlayAsync().ConfigureAwait(false);
-            if (!IsPlaying)
-            {
-                return;
-            }
-        }
-
-        RunOnUi(() =>
-        {
-            IsBusy = true;
-            PlayerStatusText = _localization.T("tone_playing");
-            UpdatePlayerUi();
-            UpdateDeviceButtons();
-        });
+        SetBusy(true, "tone_playing");
 
         try
         {
+            // Synthesize first: the very first call loads the speech engine, and doing
+            // it before playback starts keeps that latency out of the "sending" state.
+            string sentence = _localization.T("test_speech_text");
+            (short[] Samples, int SampleRate, int Channels)? clip =
+                await SynthesizeTestClipAsync(sentence).ConfigureAwait(false);
+
+            // The tone travels through the live stream, so start playback first when
+            // the user has only connected the device. TogglePlayAsync refuses to run
+            // while the busy flag is set, so it has to be released for that call.
+            RunOnUi(() =>
+            {
+                IsBusy = false;
+                UpdatePlayerUi();
+                UpdateDeviceButtons();
+            });
+
+            if (!IsPlaying)
+            {
+                await TogglePlayAsync().ConfigureAwait(false);
+                if (!IsPlaying)
+                {
+                    return;
+                }
+
+                SetBusy(true, "tone_playing");
+            }
+
             AirPlayStreamSession? session = _coordinator.ActiveSessions.FirstOrDefault();
             if (session is null)
             {
@@ -1103,12 +1109,12 @@ public partial class MainViewModel : ObservableObject
             // usable voice, fall back to the 440 Hz tone.
             if (clip is { } speech)
             {
-                AppLog.Info($"enviando prueba de voz: \"{sentence}\"");
+                AppLog.Info("log.tone.sending", new { text = sentence });
                 await session.PlayPcmAsync(speech.Samples, speech.SampleRate, speech.Channels).ConfigureAwait(false);
             }
             else
             {
-                AppLog.Warn("sin voz disponible: se envía el tono de 440 Hz");
+                AppLog.Warn("log.tone.no_voice");
                 await session.PlayTestToneAsync(440, 2000, 0.3f).ConfigureAwait(false);
             }
 
@@ -1116,8 +1122,8 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            AppLog.Error("prueba de conexión falló", ex);
-            RunOnUi(() => ShowToast(_localization.T("error_prefix", new { err = ex.Message })));
+            AppLog.Error("log.tone.failed", ex);
+            RunOnUi(() => ShowToast(_localization.T("error_prefix", new { err = AirSendError.Describe(ex) })));
         }
         finally
         {
@@ -1128,6 +1134,75 @@ public partial class MainViewModel : ObservableObject
                 UpdateDeviceButtons();
             });
         }
+    }
+
+    /// <summary>
+    /// The longest a test-tone request may stay in the busy state waiting for SAPI.
+    /// The first synthesis loads the speech engine (about 8 s on a cold start here)
+    /// and a broken voice has been seen to block forever, so the wait is bounded and
+    /// the tone falls back to 440 Hz instead of freezing the window.
+    /// </summary>
+    private static readonly TimeSpan SpeechSynthesisTimeout = TimeSpan.FromSeconds(15);
+
+    private async Task<(short[] Samples, int SampleRate, int Channels)?> SynthesizeTestClipAsync(string sentence)
+    {
+        Task<(short[] Samples, int SampleRate, int Channels)?> synthesis = Task.Run(() =>
+        {
+            try
+            {
+                return SpeechTestClip.TrySynthesize(sentence, _localization.Tag);
+            }
+            catch (Exception ex)
+            {
+                // SAPI can fail in ways SpeechTestClip does not expect (broken voice
+                // registration, COM apartment problems): never let it escape.
+                AppLog.Warn("log.speech.failed", new { type = ex.GetType().Name, err = AirSendError.Describe(ex) });
+                return null;
+            }
+        });
+
+        Task finished = await Task
+            .WhenAny(synthesis, Task.Delay(SpeechSynthesisTimeout))
+            .ConfigureAwait(false);
+
+        if (finished != synthesis)
+        {
+            AppLog.Warn("log.speech.timeout");
+            return null;
+        }
+
+        return await synthesis.ConfigureAwait(false);
+    }
+
+    private void SetBusy(bool busy, string? statusKey = null) => RunOnUi(() =>
+    {
+        IsBusy = busy;
+        if (statusKey is not null)
+        {
+            PlayerStatusText = _localization.T(statusKey);
+        }
+
+        UpdatePlayerUi();
+        UpdateDeviceButtons();
+    });
+
+    partial void OnIsBusyChanged(bool value) => _busySince = value ? DateTimeOffset.UtcNow : null;
+
+    /// <summary>
+    /// Releases the busy flag when the operation holding it has clearly hung. Called
+    /// from the UI refresh paths (discovery keeps reporting devices every few seconds),
+    /// so a wedged operation cannot leave the window permanently disabled.
+    /// </summary>
+    private void CheckBusyWatchdog()
+    {
+        if (!IsBusy || _busySince is not { } since || DateTimeOffset.UtcNow - since < BusyWatchdog)
+        {
+            return;
+        }
+
+            AppLog.Warn("log.busy.watchdog", new { minutes = (int)BusyWatchdog.TotalMinutes });
+        IsBusy = false;
+        ShowToast(_localization.T("busy_timeout"));
     }
 
     public void RequestShowHideWindow() => WindowToggleRequested?.Invoke();
@@ -1187,7 +1262,7 @@ public partial class MainViewModel : ObservableObject
             }
             catch (Exception ex)
             {
-                RunOnUi(() => PlayerStatusText = _localization.T("vol_error_prefix", new { err = ex.Message }));
+                RunOnUi(() => PlayerStatusText = _localization.T("vol_error_prefix", new { err = AirSendError.Describe(ex) }));
             }
 
             // Dropping into the very quiet range only warns: it does not block.
@@ -1266,7 +1341,7 @@ public partial class MainViewModel : ObservableObject
                 _loadingStartup = true;
                 StartWithWindows = !value;
                 _loadingStartup = false;
-                ShowToast(_localization.T("settings_startup_failed", new { err = ex.Message }));
+                ShowToast(_localization.T("settings_startup_failed", new { err = AirSendError.Describe(ex) }));
             });
         }
     }
@@ -1335,7 +1410,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         _updates.Policy = UpdateIntervals[value];
-        AppLog.Info($"comprobación de actualizaciones: {UpdatePolicy.ToSetting(UpdateIntervals[value])}");
+        AppLog.Info("log.update.policy", new { policy = UpdatePolicy.ToSetting(UpdateIntervals[value]) });
     }
 
     private void RefreshAutoConnectOptions()
@@ -1477,16 +1552,16 @@ public partial class MainViewModel : ObservableObject
         }
         catch (UpdateException ex)
         {
-            AppLog.Error("no pude preparar la actualización", ex);
+            AppLog.Error("log.update.prepare_failed", ex);
             string message = ex.Reason == UpdateFailure.NoPackageForThisBuild
                 ? _localization.T("update_no_package", new { build = _updates.Build.Describe() })
-                : _localization.T("update_failed", new { err = ex.Message });
+                : _localization.T("update_failed", new { err = AirSendError.Describe(ex) });
             return new UpdatePreparation(null, message);
         }
         catch (Exception ex)
         {
-            AppLog.Error("no pude preparar la actualización", ex);
-            return new UpdatePreparation(null, _localization.T("update_failed", new { err = ex.Message }));
+            AppLog.Error("log.update.prepare_failed", ex);
+            return new UpdatePreparation(null, _localization.T("update_failed", new { err = AirSendError.Describe(ex) }));
         }
     }
 
@@ -1537,17 +1612,15 @@ public partial class MainViewModel : ObservableObject
     {
         RunOnUi(() =>
         {
-            string text = message == "capture_interrupted"
-                ? _localization.T("capture_interrupted")
-                : message;
-            ShowToast(text);
+            // Core already resolved this text in the interface language.
+            ShowToast(message);
 
             if (IsPlaying)
             {
                 IsPlaying = false;
                 _activeRouteKeys.Clear();
                 _ = _coordinator.StopStreamingAsync();
-                PlayerStatusText = _localization.T("error_prefix", new { err = text });
+                PlayerStatusText = _localization.T("error_prefix", new { err = message });
                 UpdatePlayerUi();
                 UpdateDeviceButtons();
             }
@@ -1717,6 +1790,8 @@ public partial class MainViewModel : ObservableObject
 
     private void UpdateDeviceButtons()
     {
+        CheckBusyWatchdog();
+
         foreach (DeviceViewModel device in Devices)
         {
             bool connected = IsPlaying
@@ -1736,6 +1811,8 @@ public partial class MainViewModel : ObservableObject
 
     private void UpdatePlayerUi()
     {
+        CheckBusyWatchdog();
+
         IsPlayerVisible = _playerDevice is not null;
 
         if (_playerDevice is null)

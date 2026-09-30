@@ -446,10 +446,13 @@ public class UpdateDownloadTests : IDisposable
         using var http = new HttpClient(handler);
         using var client = new UpdateClient("owner/repo", http) { RetryDelay = TimeSpan.Zero };
 
-        await Assert.ThrowsAsync<IOException>(() => client.DownloadAsync(
+        // The failure carries a catalog key, so the dialog can explain it in the
+        // language the interface is using.
+        UpdateException error = await Assert.ThrowsAsync<UpdateException>(() => client.DownloadAsync(
             new UpdateAsset("AirSend-0.2.1-win-x64-selfcontained.zip", "https://example.invalid/package.zip", payload.Length),
             Path.Combine(_directory, "package.zip")));
 
+        Assert.Equal(UpdateFailure.Download, error.Reason);
         Assert.Equal(4, handler.Requests.Count);
     }
 

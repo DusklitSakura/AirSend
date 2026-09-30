@@ -16,7 +16,8 @@ public sealed record SessionKeys(byte[] WriteKey, byte[] ReadKey, byte[] SharedS
     public ControlCipher CreateCipher() => new(WriteKey, ReadKey);
 }
 
-public sealed class AirPlayPairingException(string message) : Exception(message);
+public sealed class AirPlayPairingException(string messageKey, object? parameters = null, Exception? innerException = null)
+    : AirSendException(messageKey, parameters, innerException);
 
 /// <summary>
 /// AirPlay 2 pairing: transient pair-setup (SRP, HKP = 4, PIN "3939") and
@@ -45,13 +46,13 @@ public static class AirPlayPairing
 
         if (m2.Error is not null)
         {
-            throw new AirPlayPairingException($"pair-setup M2 failed: {m2.ErrorDescription}");
+        throw new AirPlayPairingException("error.pairing.setup_m2_failed", new { detail = m2.ErrorDescription });
         }
 
         byte[] serverPublicKey = m2.Get(TlvType.PublicKey)
-            ?? throw new AirPlayPairingException("pair-setup M2 had no server public key");
+            ?? throw new AirPlayPairingException("error.pairing.setup_m2_no_key");
         byte[] salt = m2.Get(TlvType.Salt)
-            ?? throw new AirPlayPairingException("pair-setup M2 had no salt");
+            ?? throw new AirPlayPairingException("error.pairing.setup_m2_no_salt");
 
         SrpProof proof = srp.Proceed(serverPublicKey, salt);
 
@@ -66,18 +67,18 @@ public static class AirPlayPairing
 
         if (m4.Error is not null)
         {
-            throw new AirPlayPairingException($"pair-setup M4 failed: {m4.ErrorDescription}");
+        throw new AirPlayPairingException("error.pairing.setup_m4_failed", new { detail = m4.ErrorDescription });
         }
 
         byte[] serverProof = m4.Get(TlvType.Proof)
-            ?? throw new AirPlayPairingException("pair-setup M4 had no proof");
+            ?? throw new AirPlayPairingException("error.pairing.setup_m4_no_proof");
 
         if (!SrpClient.VerifyServerProof(serverProof, proof.ExpectedServerProof))
         {
-            throw new AirPlayPairingException("pair-setup M4 proof mismatch");
+        throw new AirPlayPairingException("error.pairing.setup_m4_proof_mismatch");
         }
 
-        AppLog.Info("pair-setup transient completado (M1-M4)");
+        AppLog.Info("log.pairing.setup_done");
         return SessionKeys.FromSharedSecret(proof.SharedSecret);
     }
 
@@ -96,9 +97,9 @@ public static class AirPlayPairing
         Tlv8 m2 = Tlv8.Parse(RequireBody(m2Response, "pair-verify M2"));
 
         byte[] serverPublicKey = m2.Get(TlvType.PublicKey)
-            ?? throw new AirPlayPairingException("pair-verify M2 had no server public key");
+            ?? throw new AirPlayPairingException("error.pairing.verify_m2_no_key");
         byte[] encrypted = m2.Get(TlvType.EncryptedData)
-            ?? throw new AirPlayPairingException("pair-verify M2 had no encrypted data");
+            ?? throw new AirPlayPairingException("error.pairing.verify_m2_no_data");
 
         byte[] sharedSecret = Curve25519.X25519(privateKey, serverPublicKey);
         byte[] verifyKey = HkdfSha512.DerivePairVerifyKey(sharedSecret);
@@ -106,15 +107,15 @@ public static class AirPlayPairing
         Tlv8 serverInfo = Tlv8.Parse(decrypted);
 
         byte[] serverIdentifier = serverInfo.Get(TlvType.Identifier)
-            ?? throw new AirPlayPairingException("pair-verify M2 had no identifier");
+            ?? throw new AirPlayPairingException("error.pairing.verify_m2_no_id");
         byte[] serverSignature = serverInfo.Get(TlvType.Signature)
-            ?? throw new AirPlayPairingException("pair-verify M2 had no signature");
+            ?? throw new AirPlayPairingException("error.pairing.verify_m2_no_signature");
 
         // The signature covers: shared secret || our public key || their public key.
         byte[] signedData = BigInts.Concat(sharedSecret, publicKey, serverPublicKey);
         if (!Ed25519.Verify(serverIdentifier, signedData, serverSignature))
         {
-            throw new AirPlayPairingException("pair-verify M2 signature did not verify");
+        throw new AirPlayPairingException("error.pairing.verify_m2_bad_signature");
         }
 
         var m3 = new Tlv8();
@@ -132,10 +133,10 @@ public static class AirPlayPairing
         Tlv8 m4 = Tlv8.Parse(RequireBody(m4Response, "pair-verify M4"));
         if (m4.Error is not null)
         {
-            throw new AirPlayPairingException($"pair-verify M4 failed: {m4.ErrorDescription}");
+        throw new AirPlayPairingException("error.pairing.verify_m4_failed", new { detail = m4.ErrorDescription });
         }
 
-        AppLog.Info("pair-verify completado (M1-M4)");
+        AppLog.Info("log.pairing.verify_done");
         return SessionKeys.FromSharedSecret(sharedSecret);
     }
 
@@ -157,9 +158,13 @@ public static class AirPlayPairing
     {
         if (!response.IsSuccess)
         {
-            throw new AirPlayPairingException($"{what} returned status {response.StatusCode}");
+            throw new AirPlayPairingException("error.pairing.status", new
+            {
+                what,
+                status = response.StatusCode,
+            });
         }
 
-        return response.Body ?? throw new AirPlayPairingException($"{what} had an empty body");
+        return response.Body ?? throw new AirPlayPairingException("error.pairing.empty_body", new { what });
     }
 }

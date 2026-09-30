@@ -114,12 +114,15 @@ public enum UpdateFailure
 
     /// <summary>The downloaded package is not the one that was requested.</summary>
     PackageMismatch,
+
+    /// <summary>The package could not be downloaded.</summary>
+    Download,
 }
 
-public sealed class UpdateException : Exception
+public sealed class UpdateException : AirSendException
 {
-    public UpdateException(UpdateFailure reason, string message)
-        : base(message) => Reason = reason;
+    public UpdateException(UpdateFailure reason, string messageKey, object? parameters = null)
+        : base(messageKey, parameters) => Reason = reason;
 
     public UpdateFailure Reason { get; }
 }
@@ -164,7 +167,7 @@ public static class UpdateAssets
         string executable = Path.Combine(packageDirectory, "AirSend.exe");
         if (!File.Exists(executable))
         {
-            throw new UpdateException(UpdateFailure.PackageMismatch, "el paquete no contiene AirSend.exe");
+            throw new UpdateException(UpdateFailure.PackageMismatch, "error.update.package_no_executable");
         }
 
         InstalledBuild package = InstalledBuild.Detect(packageDirectory);
@@ -182,7 +185,8 @@ public static class UpdateAssets
             {
                 throw new UpdateException(
                     UpdateFailure.PackageMismatch,
-                    $"el paquete es {packageFlavor} y esta instalación es {build.Flavor}");
+                    "error.update.package_flavor",
+                    new { found = packageFlavor, expected = build.Flavor });
             }
 
             if (MachineOf(executable) is { } machine)
@@ -192,7 +196,8 @@ public static class UpdateAssets
                 {
                     throw new UpdateException(
                         UpdateFailure.PackageMismatch,
-                        $"el ejecutable del paquete es {packageRuntime} y esta instalación es {build.RuntimeIdentifier}");
+                        "error.update.package_arch",
+                        new { found = packageRuntime, expected = build.RuntimeIdentifier });
                 }
             }
 
@@ -201,7 +206,8 @@ public static class UpdateAssets
             {
                 throw new UpdateException(
                     UpdateFailure.PackageMismatch,
-                    $"el paquete contiene la versión {fileVersion} y no {version}");
+                    "error.update.package_version",
+                    new { found = fileVersion, expected = version });
             }
 
             return;
@@ -211,21 +217,24 @@ public static class UpdateAssets
         {
             throw new UpdateException(
                 UpdateFailure.PackageMismatch,
-                $"el paquete es para {package.RuntimeIdentifier} y esta instalación es {build.RuntimeIdentifier}");
+                "error.update.package_arch",
+                new { found = package.RuntimeIdentifier, expected = build.RuntimeIdentifier });
         }
 
         if (package.SelfContained != build.SelfContained)
         {
             throw new UpdateException(
                 UpdateFailure.PackageMismatch,
-                $"el paquete es {package.Flavor} y esta instalación es {build.Flavor}");
+                "error.update.package_flavor",
+                new { found = package.Flavor, expected = build.Flavor });
         }
 
         if (UpdateVersion.TryParse(package.Version, out UpdateVersion packageVersion) && !packageVersion.Equals(version))
         {
             throw new UpdateException(
                 UpdateFailure.PackageMismatch,
-                $"el paquete contiene la versión {packageVersion} y no {version}");
+                "error.update.package_version",
+                new { found = packageVersion, expected = version });
         }
     }
 

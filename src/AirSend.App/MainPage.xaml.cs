@@ -1,3 +1,4 @@
+using AirSend.Core;
 using AirSend.Core.Logging;
 using AirSend.Core.Updates;
 using AirSend.Services;
@@ -274,7 +275,7 @@ public sealed partial class MainPage : Page
         {
             // Another ContentDialog may already be open (welcome prompts, volume
             // warning): the next check will offer the update again.
-            AppLog.Warn($"no pude mostrar el diálogo de actualización: {ex.Message}");
+            AppLog.Warn("log.update.dialog_failed", new { err = AirSendError.Describe(ex) });
             return;
         }
 

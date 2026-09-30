@@ -14,7 +14,8 @@ public sealed record ProbeResult(string? ServerHeader, string RawResponse)
         ServerHeader?.Contains("AirTunes", StringComparison.OrdinalIgnoreCase) ?? false;
 }
 
-public sealed class AirPlayProbeException(string message, Exception? inner = null) : Exception(message, inner);
+public sealed class AirPlayProbeException(string messageKey, object? parameters = null, Exception? innerException = null)
+    : AirSendException(messageKey, parameters, innerException);
 
 /// <summary>
 /// Confirms that an endpoint really speaks AirPlay by opening the RTSP port and
@@ -45,11 +46,18 @@ public static class AirPlayProbe
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                throw new AirPlayProbeException($"timeout after {ConnectTimeout.TotalSeconds:0.#}s conectando a {endpoint}");
+        throw new AirPlayProbeException("error.probe.connect_timeout", new
+        {
+            seconds = ConnectTimeout.TotalSeconds,
+            endpoint,
+        });
             }
             catch (SocketException ex)
             {
-                throw new AirPlayProbeException($"connection to {endpoint} failed: {ex.Message}", ex);
+        throw new AirPlayProbeException(
+            "error.probe.connect_failed",
+            new { endpoint, err = AirSendError.Describe(ex) },
+            ex);
             }
         }
 
@@ -94,14 +102,17 @@ public static class AirPlayProbe
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new AirPlayProbeException($"timeout after {ResponseTimeout.TotalSeconds:0.#}s esperando respuesta RTSP");
+        throw new AirPlayProbeException("error.probe.response_timeout", new
+        {
+            seconds = ResponseTimeout.TotalSeconds,
+        });
         }
 
         string text = response.ToString();
         if (!text.StartsWith("RTSP/1.0", StringComparison.Ordinal))
         {
             string firstLine = text.Split('\n').FirstOrDefault()?.Trim() ?? string.Empty;
-            throw new AirPlayProbeException($"response is not an RTSP/AirPlay reply: {firstLine}");
+        throw new AirPlayProbeException("error.probe.not_rtsp", new { line = firstLine });
         }
 
         string? serverHeader = null;
@@ -131,7 +142,9 @@ public static class AirPlayProbe
         return new AirPlayDevice
         {
             Id = $"manual://{address}:{resolvedPort}",
-            Name = string.IsNullOrWhiteSpace(name) ? $"Dispositivo manual {address}" : name.Trim(),
+            Name = string.IsNullOrWhiteSpace(name)
+                ? Localization.AppText.Get("name.manual_device", new { address })
+                : name.Trim(),
             Host = address.ToString(),
             Addresses = [address],
             Port = resolvedPort,

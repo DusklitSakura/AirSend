@@ -1,3 +1,4 @@
+using AirSend.Core;
 using AirSend.Core.Logging;
 
 namespace AirSend.Services;
@@ -27,7 +28,7 @@ public static class SingleInstance
         IsPrimary = createdNew;
         if (!createdNew)
         {
-            AppLog.Info("ya hay otra instancia de AirSend en ejecución");
+        AppLog.Info("log.instance.already_running");
         }
 
         return createdNew;
@@ -63,7 +64,7 @@ public static class SingleInstance
                 catch (Exception ex)
                 {
                     // Never let a wake-up request take the process down.
-                    AppLog.Warn($"no pude mostrar la ventana existente: {ex.Message}");
+            AppLog.Warn("log.instance.wake_failed", new { err = AirSendError.Describe(ex) });
                 }
             }
         })

@@ -137,7 +137,13 @@ public sealed class RtspClient : IAsyncDisposable
 
         await _stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
         await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        AppLog.Debug($"RTSP → {request.Method} {request.Uri} (CSeq {_cseq}, {plaintext.Length} bytes)");
+        AppLog.Debug("log.rtsp.request", new
+        {
+            method = request.Method,
+            uri = request.Uri,
+            cseq = _cseq,
+            bytes = plaintext.Length,
+        });
 
         return await ReadResponseAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -161,7 +167,12 @@ public sealed class RtspClient : IAsyncDisposable
         {
             if (TryParseResponse(out RtspResponse? response))
             {
-                AppLog.Debug($"RTSP ← {response!.StatusCode} {response.Reason} ({_receiveBuffer.Count} bytes buffered)");
+        AppLog.Debug("log.rtsp.response", new
+        {
+            status = response!.StatusCode,
+            reason = response.Reason,
+            bytes = _receiveBuffer.Count,
+        });
                 return response;
             }
 

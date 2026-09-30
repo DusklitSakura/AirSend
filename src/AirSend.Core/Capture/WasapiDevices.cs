@@ -84,7 +84,7 @@ public static class WasapiDevices
         }
         catch (Exception ex) when (ex is COMException or InvalidCastException or InvalidOperationException)
         {
-            AppLog.Warn($"no pude enumerar los dispositivos de audio: {ex.Message}");
+            AppLog.Warn("log.capture.enumerate_failed", new { err = AirSendError.Describe(ex) });
         }
 
         return devices;
@@ -115,7 +115,7 @@ public static class WasapiDevices
         }
         catch (Exception ex) when (ex is COMException or InvalidCastException or InvalidOperationException or NotSupportedException)
         {
-            AppLog.Warn($"no pude leer la salida predeterminada: {ex.Message}");
+            AppLog.Warn("log.capture.default_read_failed", new { err = AirSendError.Describe(ex) });
             return null;
         }
         finally

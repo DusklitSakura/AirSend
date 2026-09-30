@@ -1,4 +1,5 @@
 using System.Text;
+using AirSend.Core.Localization;
 
 namespace AirSend.Core.Logging;
 
@@ -37,6 +38,17 @@ public static class AppLog
 
     public static string? LogDirectory => _logDirectory;
 
+    /// <summary>
+    /// Language of the messages ("zh", "en", "es"). The app sets it from the interface
+    /// language, so the log reads like the rest of the UI; the Spanish column of the
+    /// catalog stays the reference text ported from the upstream Rust build.
+    /// </summary>
+    public static string Language
+    {
+        get => AppText.Language;
+        set => AppText.Language = value;
+    }
+
     public static void Initialize(string applicationName = "AirSend")
     {
         if (_initialized)
@@ -55,7 +67,6 @@ public static class AppLog
             {
                 Directory.CreateDirectory(candidate);
                 _logDirectory = candidate;
-                Info($"→ logs a {candidate}");
                 return;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -76,16 +87,30 @@ public static class AppLog
 
     public static void SetMinimumLevel(AppLogLevel level) => _minimumLevel = level;
 
-    public static void Debug(string message) => Write(AppLogLevel.Debug, message);
+    public static void Debug(string key, object? parameters = null) =>
+        Write(AppLogLevel.Debug, LogMessages.Format(Language, key, parameters));
 
-    public static void Info(string message) => Write(AppLogLevel.Info, message);
+    public static void Info(string key, object? parameters = null) =>
+        Write(AppLogLevel.Info, LogMessages.Format(Language, key, parameters));
 
-    public static void Warn(string message) => Write(AppLogLevel.Warn, message);
+    public static void Warn(string key, object? parameters = null) =>
+        Write(AppLogLevel.Warn, LogMessages.Format(Language, key, parameters));
 
-    public static void Error(string message) => Write(AppLogLevel.Error, message);
+    public static void Error(string key, object? parameters = null) =>
+        Write(AppLogLevel.Error, LogMessages.Format(Language, key, parameters));
 
-    public static void Error(string message, Exception exception) =>
-        Write(AppLogLevel.Error, $"{message}: {exception.GetType().Name}: {exception.Message}");
+    public static void Error(string key, Exception exception, object? parameters = null) =>
+        Write(
+            AppLogLevel.Error,
+            $"{LogMessages.Format(Language, key, parameters)}: " +
+            $"{exception.GetType().Name}: {AirSendError.Describe(exception)}");
+
+    /// <summary>
+    /// Resolves a catalog entry without logging it, for the few places that need a
+    /// translated fragment inside a message (for example "no default device").
+    /// </summary>
+    public static string Text(string key, object? parameters = null) =>
+        AppText.Get(key, parameters);
 
     public static IReadOnlyList<AppLogEntry> Snapshot()
     {

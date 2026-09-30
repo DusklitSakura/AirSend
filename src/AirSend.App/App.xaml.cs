@@ -1,3 +1,4 @@
+using AirSend.Core;
 using AirSend.Core.Logging;
 using AirSend.Services;
 using Microsoft.UI.Dispatching;
@@ -15,7 +16,6 @@ public partial class App : Application
         try
         {
             AppLog.Initialize();
-            AppLog.Info("AirSend (WinUI 3) iniciando");
 
             UnhandledException += OnUnhandledException;
             AppDomain.CurrentDomain.UnhandledException += (_, args) =>
@@ -25,12 +25,29 @@ public partial class App : Application
 
             Settings = new SettingsStore();
             Localization = new Localization(Settings);
+            // The log follows the interface language. It used to be Spanish no matter
+            // what, because the messages were ported verbatim from the upstream build.
+            AppLog.Language = Localization.Tag;
+            Localization.LanguageChanged += () => AppLog.Language = Localization.Tag;
+
+            // First lines of every session: where the log lives, then what is starting.
+            // They are written after the language is known so the whole file reads in
+            // the same language.
+            if (AppLog.LogDirectory is { } logDirectory)
+            {
+                AppLog.Info("log.logs.directory", new { path = logDirectory });
+            }
+
+            AppLog.Info("log.app.starting");
+
             Coordinator = new AirPlayCoordinator(Settings);
             Updates = new UpdateService(Settings);
 
-            AppLog.Info(
-                $"idioma de la interfaz: {Localization.Tag} " +
-                $"(sistema: {System.Globalization.CultureInfo.CurrentUICulture.Name})");
+            AppLog.Info("log.app.language", new
+            {
+                language = Localization.Tag,
+                system = System.Globalization.CultureInfo.CurrentUICulture.Name,
+            });
         }
         catch (Exception ex)
         {
@@ -41,7 +58,7 @@ public partial class App : Application
 
     private void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
     {
-        AppLog.Error("excepción no controlada", e.Exception);
+        AppLog.Error("log.app.unhandled", e.Exception);
         WriteStartupError("XAML", e.Exception);
     }
 
@@ -106,7 +123,7 @@ public partial class App : Application
         if (Environment.GetCommandLineArgs().Any(
                 argument => argument.Equals("--minimized", StringComparison.OrdinalIgnoreCase)))
         {
-            AppLog.Info("inicio automático: la ventana queda en la bandeja");
+            AppLog.Info("log.app.startup_tray");
             if (Window is MainWindow mainWindow)
             {
                 mainWindow.Hide();
@@ -165,7 +182,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            AppLog.Warn($"bandeja del sistema no disponible: {ex.Message}");
+            AppLog.Warn("log.tray.unavailable", new { err = AirSendError.Describe(ex) });
         }
     }
 

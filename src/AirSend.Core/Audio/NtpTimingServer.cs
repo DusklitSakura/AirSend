@@ -50,7 +50,7 @@ public sealed class NtpTimingServer : IDisposable
             }
             catch (SocketException ex)
             {
-                AppLog.Warn($"NTP timing socket error: {ex.Message}");
+            AppLog.Warn("log.ntp.socket_error", new { err = AirSendError.Describe(ex) });
                 continue;
             }
             catch (ObjectDisposedException)
@@ -71,8 +71,12 @@ public sealed class NtpTimingServer : IDisposable
 
                     if (DatagramsReceived <= 3)
                     {
-                        AppLog.Debug(
-                            $"NTP timing: {result.Buffer.Length} bytes de {result.RemoteEndPoint}, tipo {payloadType}");
+                            AppLog.Debug("log.ntp.request", new
+                            {
+                                bytes = result.Buffer.Length,
+                                endpoint = result.RemoteEndPoint,
+                                type = payloadType,
+                            });
                     }
                 }
 
@@ -87,7 +91,7 @@ public sealed class NtpTimingServer : IDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                AppLog.Debug($"NTP timing: petición descartada ({ex.Message})");
+                        AppLog.Debug("log.ntp.discarded", new { err = AirSendError.Describe(ex) });
             }
         }
     }

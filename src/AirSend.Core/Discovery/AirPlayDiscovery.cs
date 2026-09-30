@@ -54,18 +54,18 @@ public sealed class AirPlayDiscovery : IAsyncDisposable
 
         if (_browser.IsRunning)
         {
-            AppLog.Debug($"discovery ya en curso, replayé {_cache.Count} cacheados");
+            AppLog.Debug("log.discovery.cached", new { count = _cache.Count });
             return;
         }
 
         _browser.Start([AirPlayService, RaopService]);
-        AppLog.Info("discovery: browsing _airplay._tcp y _raop._tcp");
+        AppLog.Info("log.discovery.browsing");
     }
 
     public void StopBrowsing()
     {
         _browser.Stop();
-        AppLog.Info("discovery: detenido");
+        AppLog.Info("log.discovery.stopped");
     }
 
     /// <summary>Adds a device that was not found over mDNS to the cache (manual IP entry).</summary>
@@ -98,7 +98,7 @@ public sealed class AirPlayDiscovery : IAsyncDisposable
     private void OnServiceResolved(MdnsService service)
     {
         AirPlayDevice device = ToDevice(service);
-        AppLog.Info($"discovered {service.ServiceType}: {device}");
+                    AppLog.Info("log.discovery.found", new { service = service.ServiceType, device });
         _cache[device.Id] = device;
         DeviceDiscovered?.Invoke(device);
     }

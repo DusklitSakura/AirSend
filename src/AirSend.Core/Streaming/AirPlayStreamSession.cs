@@ -20,7 +20,8 @@ public sealed record StreamingInfo(
     int Channels,
     float Volume);
 
-public sealed class StreamingException(string message) : Exception(message);
+public sealed class StreamingException(string messageKey, object? parameters = null, Exception? innerException = null)
+    : AirSendException(messageKey, parameters, innerException);
 
 /// <summary>
 /// One live AirPlay 2 stream: RTSP session, pairing, RTP audio pump and the
@@ -34,6 +35,13 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
     /// <summary>The HomePod drops a session that has been silent for ~10 s; the
     /// upstream uses 2 s and so do we.</summary>
     private static readonly TimeSpan FeedbackInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// How long <see cref="PlayPcmAsync"/> waits for the pump to finish sending what it
+    /// queued. The capture feeds the queue in parallel while audio plays, so "wait for
+    /// an empty queue" needs a deadline to stay bounded.
+    /// </summary>
+    private static readonly TimeSpan QueueDrainTimeout = TimeSpan.FromSeconds(5);
 
     private const int ControlQueueCapacity = 64;
 
@@ -133,7 +141,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
         LatencyProfile.Validate(latencyMs);
 
         IPAddress address = device.PreferredAddress
-            ?? throw new StreamingException($"device {device.Name} has no IP address");
+            ?? throw new StreamingException("error.stream.no_ip", new { name = device.Name });
 
         var client = new RtspClient(address, device.Port);
         NtpTimingServer? timingServer = null;
@@ -141,7 +149,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
         try
         {
             await client.ConnectAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
-            AppLog.Info($"RTSP conectado a {address}:{device.Port}");
+            AppLog.Info("log.rtsp.connected", new { address = $"{address}:{device.Port}" });
 
             string clientInstance = identity.CompactDeviceId;
             client.AddSessionHeader("User-Agent", "AirPlay/745.83");
@@ -166,7 +174,11 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
             // with an encrypted OPTIONS so we know the channel is live.
             RtspResponse options = await client.SendAsync("OPTIONS", "*", cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
-            AppLog.Debug($"OPTIONS cifrado → {options.StatusCode} ({options.Header("Public") ?? "sin Public"})");
+            AppLog.Debug("log.rtsp.options", new
+            {
+                status = options.StatusCode,
+                methods = options.Header("Public") ?? AppLog.Text("log.rtsp.no_public"),
+            });
 
             timingServer = new NtpTimingServer();
 
@@ -177,7 +189,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
 
             if (!phase1.IsSuccess)
             {
-                throw new StreamingException($"SETUP phase 1 returned {phase1.StatusCode}");
+                throw new StreamingException("error.stream.setup1_failed", new { status = phase1.StatusCode });
             }
 
             Dictionary<string, object?>? phase1Body = ParsePlist(phase1);
@@ -194,11 +206,11 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
                 {
                     using var eventsClient = new System.Net.Sockets.TcpClient();
                     await eventsClient.ConnectAsync(address, eventPort, cancellationToken).ConfigureAwait(false);
-                    AppLog.Debug($"conexión de eventos establecida con el puerto {eventPort}");
+                    AppLog.Debug("log.rtsp.events_connected", new { port = eventPort });
                 }
                 catch (Exception ex) when (ex is System.Net.Sockets.SocketException or OperationCanceledException)
                 {
-                    AppLog.Warn($"no pude conectar al puerto de eventos {eventPort}: {ex.Message}");
+                    AppLog.Warn("log.rtsp.events_failed", new { port = eventPort, err = AirSendError.Describe(ex) });
                 }
             }
 
@@ -207,6 +219,9 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
             // Real listening socket: the receiver sends RTCP (retransmit requests,
             // sync packets) to this port and expects answers from the same port.
             var controlSocket = new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Any, 0));
+            // Same reasoning as the RTP socket: a send without a deadline can stall the
+            // pump (sync packets are sent from it) and with it every queued frame.
+            controlSocket.Client.ConfigureSocket();
             int controlPort = ((IPEndPoint)controlSocket.Client.LocalEndPoint!).Port;
 
             byte[] setupPhase2 = BuildSetupPhase2(
@@ -224,7 +239,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
                 // Receivers answer 400 when the previous session is still being
                 // released; one short retry covers the common case of switching
                 // devices or restarting playback quickly.
-                AppLog.Warn($"SETUP phase 2 → {phase2.StatusCode}, reintentando una vez");
+                AppLog.Warn("log.setup.retrying", new { status = phase2.StatusCode });
                 await Task.Delay(750, cancellationToken).ConfigureAwait(false);
                 phase2 = await client
                     .SendAsync("SETUP", client.BaseUri, setupPhase2, cancellationToken: cancellationToken)
@@ -233,21 +248,25 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
 
             if (!phase2.IsSuccess)
             {
-                throw new StreamingException($"SETUP phase 2 returned {phase2.StatusCode}");
+                throw new StreamingException("error.stream.setup2_failed", new { status = phase2.StatusCode });
             }
 
             (int? dataPortValue, int? controlPortValue) = ExtractStreamPorts(phase2);
             DumpPlist("SETUP phase 2 response", ParsePlist(phase2));
             int dataPort = dataPortValue ?? 6000;
             int receiverControlPort = controlPortValue ?? 0;
-            AppLog.Info(
-                $"SETUP completado: audio → {address}:{dataPort}, control ← {controlPort} " +
-                $"(control del receptor {receiverControlPort})");
+                AppLog.Info("log.setup.done", new
+                {
+                    address,
+                    dataPort,
+                    controlPort,
+                    receiverControlPort,
+                });
 
             RtspResponse record = await client
                 .SendAsync("RECORD", client.BaseUri, Array.Empty<byte>(), cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
-            AppLog.Info($"RECORD → {record.StatusCode} {record.Reason}");
+            AppLog.Info("log.rtsp.record", new { status = record.StatusCode, reason = record.Reason });
 
             var session = new AirPlayStreamSession(
                 device,
@@ -279,7 +298,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
                     "RTP-Info",
                     $"seq={session._sender.NextSequence};rtptime={session._sender.NextTimestamp}");
             RtspResponse flushResponse = await client.SendAsync(flush, cancellationToken).ConfigureAwait(false);
-            AppLog.Info($"FLUSH → {flushResponse.StatusCode} (rtptime 0)");
+            AppLog.Info("log.rtsp.flush", new { status = flushResponse.StatusCode });
 
             session.StartControlLoop();
 
@@ -289,7 +308,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
             if (receiverVolume is { } reported)
             {
                 session.Volume = reported;
-                AppLog.Info($"se mantiene el volumen del receptor ({reported:0.###})");
+                AppLog.Info("log.volume.kept", new { volume = reported });
             }
             else
             {
@@ -395,13 +414,45 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
             }
         }
 
-        // Let the pump drain the queue before the caller tears the session down.
-        while (_audioQueue.Count > 0)
+        // Let the pump drain the queue before the caller tears the session down, but
+        // never wait without a deadline: the capture keeps feeding the queue while the
+        // user is playing anything, and a stalled sender would otherwise keep this call
+        // (and the caller's busy flag) alive forever — which is what used to leave the
+        // whole window greyed out after pressing the test tone.
+        bool drained = await DrainQueueAsync(() => _audioQueue.Count, QueueDrainTimeout, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!drained)
+        {
+            AppLog.Warn("log.queue.stuck", new
+            {
+                blocks = _audioQueue.Count,
+                seconds = (int)QueueDrainTimeout.TotalSeconds,
+            });
+        }
+
+        await Task.Delay(300, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Waits for <paramref name="remaining"/> to report an empty queue, giving up after
+    /// <paramref name="timeout"/>. Bounded on purpose: the capture keeps adding blocks
+    /// while anything is playing, so an unbounded wait can outlive the caller's intent
+    /// (and, through it, the UI's busy flag).
+    /// </summary>
+    internal static async Task<bool> DrainQueueAsync(
+        Func<int> remaining,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var clock = Stopwatch.StartNew();
+
+        while (remaining() > 0 && clock.Elapsed < timeout)
         {
             await Task.Delay(20, cancellationToken).ConfigureAwait(false);
         }
 
-        await Task.Delay(300, cancellationToken).ConfigureAwait(false);
+        return remaining() == 0;
     }
 
     /// <summary>Converts arbitrary PCM to the 44.1 kHz / stereo / 16-bit AirPlay format.</summary>
@@ -461,7 +512,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
 
         if (!response.IsSuccess)
         {
-            AppLog.Warn($"SET_PARAMETER volume → {response.StatusCode}");
+            AppLog.Warn("log.volume.set_failed", new { status = response.StatusCode });
         }
     }
 
@@ -491,14 +542,14 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
 
             if (!response.IsSuccess)
             {
-                AppLog.Debug($"feedback → {response.StatusCode} {response.Reason}");
+            AppLog.Debug("log.feedback.sent", new { status = response.StatusCode, reason = response.Reason });
             }
 
             return response.IsSuccess;
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException)
         {
-            AppLog.Warn($"feedback falló: {ex.Message}");
+            AppLog.Warn("log.feedback.failed", new { err = AirSendError.Describe(ex) });
             return false;
         }
     }
@@ -527,19 +578,23 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
                     .SendAsync("GET_PARAMETER", uri, body, contentType, cancellationToken)
                     .ConfigureAwait(false);
 
-                AppLog.Debug(
-                    $"consulta de volumen ({contentType}, uri '{uri}') → {response.StatusCode}: " +
-                    $"{Truncate(response.BodyText, 120)}");
+                    AppLog.Debug("log.volume.query", new
+                    {
+                        contentType,
+                        uri,
+                        status = response.StatusCode,
+                        body = Truncate(response.BodyText, 120),
+                    });
 
                 if (response.IsSuccess && TryParseVolume(response, out float volume))
                 {
-                    AppLog.Info($"volumen del receptor leído: {volume:0.###} ({response.BodyText.Trim()})");
+            AppLog.Info("log.volume.read", new { volume, body = response.BodyText.Trim() });
                     return volume;
                 }
             }
             catch (Exception ex) when (ex is IOException or InvalidOperationException)
             {
-                AppLog.Debug($"consulta de volumen falló ({contentType}): {ex.Message}");
+            AppLog.Debug("log.volume.query_failed", new { contentType, err = AirSendError.Describe(ex) });
             }
         }
 
@@ -621,7 +676,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
             TaskScheduler.Default);
 
         _heartbeat = Task.Run(() => HeartbeatLoop(_cts.Token), CancellationToken.None);
-        AppLog.Info("bombeador de audio iniciado (captura → ALAC → RTP)");
+        AppLog.Info("log.pump.started");
     }
 
     private WasapiLoopbackCapture CreateCapture(string? deviceId)
@@ -714,12 +769,15 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
             previous?.Dispose();
             replacement.Start();
             rebuilt = true;
-            AppLog.Info($"captura WASAPI reconstruida: {requested ?? "salida predeterminada del sistema"}");
+            AppLog.Info("log.capture.rebuilt", new
+            {
+                device = requested ?? AppLog.Text("log.capture.default_device"),
+            });
         }
         catch (Exception ex)
         {
-            AppLog.Error("no pude reconstruir la captura WASAPI", ex);
-            ErrorOccurred?.Invoke($"capture_interrupted: {ex.Message}");
+            AppLog.Error("log.capture.rebuild_failed", ex);
+            ErrorOccurred?.Invoke(Localization.AppText.Get("error.pump.failed", new { err = AirSendError.Describe(ex) }));
         }
         finally
         {
@@ -812,10 +870,14 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
                 if (stopwatch.ElapsedMilliseconds - nextReport >= 10_000)
                 {
                     nextReport = stopwatch.ElapsedMilliseconds;
-                    AppLog.Info(
-                        $"airplay-pump: enviados {FramesSent} paquetes, {FramesDropped} en cola, " +
-                        $"control recibidos {ControlPacketsReceived} (reintentos {RetransmitRequestsAnswered}), " +
-                        $"NTP recibidos {TimingRequestsReceived}");
+                    AppLog.Info("log.pump.stats", new
+                    {
+                        sent = FramesSent,
+                        queued = FramesDropped,
+                        control = ControlPacketsReceived,
+                        retransmits = RetransmitRequestsAnswered,
+                        ntp = TimingRequestsReceived,
+                    });
                 }
             }
         }
@@ -825,8 +887,8 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            AppLog.Error("airplay-pump: bucle terminado con error", ex);
-            ErrorOccurred?.Invoke($"capture_interrupted: {ex.Message}");
+            AppLog.Error("log.pump.failed", ex);
+            ErrorOccurred?.Invoke(Localization.AppText.Get("error.pump.failed", new { err = AirSendError.Describe(ex) }));
         }
     }
 
@@ -872,7 +934,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
                 }
                 catch (System.Net.Sockets.SocketException ex)
                 {
-                    AppLog.Warn($"control socket: {ex.Message}");
+            AppLog.Warn("log.control.socket_error", new { err = AirSendError.Describe(ex) });
                     continue;
                 }
 
@@ -880,8 +942,12 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
                 byte payloadType = result.Buffer.Length > 1 ? (byte)(result.Buffer[1] & 0x7F) : (byte)0;
                 if (count <= 5)
                 {
-                    AppLog.Info(
-                        $"control ← {result.Buffer.Length} bytes, tipo {payloadType}, de {result.RemoteEndPoint}");
+                        AppLog.Info("log.control.received", new
+                        {
+                            bytes = result.Buffer.Length,
+                            type = payloadType,
+                            endpoint = result.RemoteEndPoint,
+                        });
                 }
 
                 if (payloadType == RtpPayloadTypes.RetransmitRequest && _sender is not null)
@@ -924,14 +990,18 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
             long count = Interlocked.Increment(ref _syncPacketsSent);
             if (count <= 3)
             {
-                AppLog.Debug(
-                    $"sync #{count} → {_receiverControlEndPoint} rtp={rtpTimestamp} " +
-                    $"ntp={NtpTimingServer.NowNtpTimestamp()}");
+                    AppLog.Debug("log.sync.sent", new
+                    {
+                        count,
+                        endpoint = _receiverControlEndPoint,
+                        rtp = rtpTimestamp,
+                        ntp = NtpTimingServer.NowNtpTimestamp(),
+                    });
             }
         }
         catch (Exception ex) when (ex is System.Net.Sockets.SocketException or ObjectDisposedException)
         {
-            AppLog.Warn($"no pude enviar el paquete sync: {ex.Message}");
+            AppLog.Warn("log.sync.failed", new { err = AirSendError.Describe(ex) });
         }
     }
 
@@ -975,11 +1045,11 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
             }
             catch (TimeoutException)
             {
-                AppLog.Warn("el bombeador no terminó a tiempo");
+                AppLog.Warn("log.pump.timeout");
             }
         }
 
-        AppLog.Info($"stream detenido (paquetes enviados: {FramesSent})");
+        AppLog.Info("log.pump.stopped", new { packets = FramesSent });
     }
 
     public async ValueTask DisposeAsync()
@@ -1077,7 +1147,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
         }
         catch (FormatException ex)
         {
-            AppLog.Debug($"respuesta plist no reconocida: {ex.Message}");
+                AppLog.Debug("log.plist.unrecognised", new { err = AirSendError.Describe(ex) });
             return null;
         }
     }
@@ -1087,7 +1157,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
     {
         if (dictionary is null)
         {
-            AppLog.Debug($"{what}: (sin cuerpo plist)");
+            AppLog.Debug("log.plist.empty", new { what });
             return;
         }
 
@@ -1101,7 +1171,7 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
                 Dictionary<string, object?> nested => $"dict[{nested.Count}] {string.Join(',', nested.Keys)}",
                 _ => entry.Value.ToString() ?? string.Empty,
             };
-            AppLog.Debug($"  {what}: {entry.Key} = {rendered}");
+                AppLog.Debug("log.plist.entry", new { what, key = entry.Key, value = rendered });
         }
     }
 
@@ -1138,13 +1208,13 @@ public sealed class AirPlayStreamSession : IAsyncDisposable
         Dictionary<string, object?>? info = ParsePlist(response);
         if (info is null)
         {
-            AppLog.Debug($"GET /info → {response.StatusCode} (sin cuerpo plist)");
+                    AppLog.Debug("log.info.no_body", new { status = response.StatusCode });
             return;
         }
 
         string model = BinaryPlist.GetString(info, "model") ?? "?";
         string source = BinaryPlist.GetString(info, "srcvers") ?? "?";
-        AppLog.Info($"dispositivo: model={model} srcvers={source} status={response.StatusCode}");
+            AppLog.Info("log.device.info", new { model, source, status = response.StatusCode });
     }
 
     private static int ReserveUdpPort(out System.Net.Sockets.UdpClient socket)

@@ -1,3 +1,4 @@
+using AirSend.Core;
 using System.Globalization;
 using AirSend.Core.Logging;
 using SpeechSynthesizer = System.Speech.Synthesis.SpeechSynthesizer;
@@ -64,18 +65,22 @@ public static class SpeechTestClip
             short[]? samples = TryReadWavePcm(buffer.ToArray(), out int sampleRate, out int channels);
             if (samples is null)
             {
-                AppLog.Warn("no pude interpretar el WAV sintetizado");
+                AppLog.Warn("log.speech.unreadable");
                 return null;
             }
 
-            AppLog.Info($"voz de prueba sintetizada: {samples.Length / Math.Max(1, channels)} frames @ {sampleRate} Hz");
+            AppLog.Info("log.speech.synthesized", new
+            {
+                frames = samples.Length / Math.Max(1, channels),
+                rate = sampleRate,
+            });
             return (samples, sampleRate, channels);
         }
         catch (Exception ex)
         {
             // Robust on purpose: a missing SAPI runtime, a locked voice or a codec
             // problem must only downgrade the test to the 440 Hz tone.
-            AppLog.Warn($"síntesis de voz no disponible ({ex.GetType().Name}): {ex.Message}");
+            AppLog.Warn("log.speech.unavailable", new { type = ex.GetType().Name, err = AirSendError.Describe(ex) });
             return null;
         }
     }
@@ -102,7 +107,7 @@ public static class SpeechTestClip
         }
         else
         {
-            AppLog.Warn("no hay ninguna voz instalada; se usará la predeterminada del sistema");
+            AppLog.Warn("log.speech.no_voice");
         }
     }
 
@@ -144,7 +149,7 @@ public static class SpeechTestClip
                 int bitsPerSample = BitConverter.ToInt16(wave, dataOffset + 14);
                 if (bitsPerSample != 16)
                 {
-                    AppLog.Warn($"el WAV sintetizado no es de 16 bits ({bitsPerSample})");
+                    AppLog.Warn("log.speech.not_16_bit", new { bits = bitsPerSample });
                     return null;
                 }
             }

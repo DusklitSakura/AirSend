@@ -1,3 +1,4 @@
+using AirSend.Core;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AirSend.Core.Logging;
@@ -224,7 +225,7 @@ public sealed class SettingsStore
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
-            AppLog.Warn($"no pude leer {_path}: {ex.Message}");
+            AppLog.Warn("log.settings.read_failed", new { path = _path, err = AirSendError.Describe(ex) });
             _settings = new Settings();
         }
     }
@@ -237,7 +238,7 @@ public sealed class SettingsStore
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            AppLog.Warn($"no pude guardar {_path}: {ex.Message}");
+            AppLog.Warn("log.settings.write_failed", new { path = _path, err = AirSendError.Describe(ex) });
         }
     }
 }

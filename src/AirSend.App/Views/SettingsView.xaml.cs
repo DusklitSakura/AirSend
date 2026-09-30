@@ -1,3 +1,4 @@
+using AirSend.Core;
 using System.Diagnostics;
 using AirSend.Core.Logging;
 using AirSend.ViewModels;
@@ -33,7 +34,7 @@ public sealed partial class SettingsView : UserControl
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
-            AppLog.Warn($"no pude abrir {path}: {ex.Message}");
+            AppLog.Warn("log.open_failed", new { path, err = AirSendError.Describe(ex) });
         }
     }
 }

@@ -137,7 +137,7 @@ public sealed class AudioEndpointWatcher : IDisposable
         {
             // A device that disappears between two registry reads must not look like
             // a switch to "no output": keep the last value and try again next tick.
-            AppLog.Warn($"no pude leer la salida predeterminada: {ex.Message}");
+            AppLog.Warn("log.capture.default_read_failed", new { err = AirSendError.Describe(ex) });
             return ObservedDefaultDeviceId;
         }
     }
@@ -158,7 +158,10 @@ public sealed class AudioEndpointWatcher : IDisposable
             return false;
         }
 
-        AppLog.Info($"la salida de audio predeterminada del sistema cambió a {current ?? "(ninguna)"}");
+        AppLog.Info("log.capture.default_changed", new
+        {
+            device = current ?? AppLog.Text("log.capture.none"),
+        });
         DefaultOutputChanged?.Invoke(current);
         return true;
     }

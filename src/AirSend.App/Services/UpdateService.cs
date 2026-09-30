@@ -1,3 +1,4 @@
+using AirSend.Core;
 using System.Diagnostics;
 using System.IO.Compression;
 using AirSend.Core.Logging;
@@ -128,9 +129,14 @@ public sealed class UpdateService : IDisposable
             // Only a completed round trip counts: a failed check retries on the next tick.
             _settings.UpdateLastCheck = DateTimeOffset.UtcNow;
 
-            AppLog.Info(release is null
-                ? $"actualizaciones: {CurrentVersion} sigue siendo la última versión"
-                : $"actualizaciones: disponible {release.Version} (instalada {CurrentVersion})");
+            if (release is null)
+            {
+                AppLog.Info("log.update.up_to_date", new { current = CurrentVersion });
+            }
+            else
+            {
+                AppLog.Info("log.update.available", new { version = release.Version, current = CurrentVersion });
+            }
 
             CheckCompleted?.Invoke(new UpdateCheckResult(release, null, manual));
         }
@@ -140,8 +146,8 @@ public sealed class UpdateService : IDisposable
         }
         catch (Exception ex)
         {
-            AppLog.Warn($"no pude comprobar si hay actualizaciones: {ex.Message}");
-            CheckCompleted?.Invoke(new UpdateCheckResult(null, ex.Message, manual));
+            AppLog.Warn("log.update.check_failed", new { err = AirSendError.Describe(ex) });
+            CheckCompleted?.Invoke(new UpdateCheckResult(null, AirSendError.Describe(ex), manual));
         }
         finally
         {
@@ -162,9 +168,10 @@ public sealed class UpdateService : IDisposable
         UpdateAsset asset = UpdateAssets.Select(release.Assets, Build, release.Version)
             ?? throw new UpdateException(
                 UpdateFailure.NoPackageForThisBuild,
-                $"la versión {release.Version} no trae un paquete para esta instalación ({Build.Describe()})");
+                "error.update.no_package",
+                new { version = release.Version, build = Build.Describe() });
 
-        AppLog.Info($"actualización: paquete elegido {asset.Name} para {Build.Describe()}");
+        AppLog.Info("log.update.package_chosen", new { package = asset.Name, build = Build.Describe() });
 
         string stagingDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -200,7 +207,7 @@ public sealed class UpdateService : IDisposable
                 cancellationToken)
             .ConfigureAwait(false);
 
-        AppLog.Info($"actualización {release.Version} descargada y preparada en {stagingDirectory}");
+        AppLog.Info("log.update.staged", new { version = release.Version, path = stagingDirectory });
         return scriptPath;
     }
 
@@ -216,7 +223,7 @@ public sealed class UpdateService : IDisposable
         };
 
         Process.Start(startInfo);
-        AppLog.Info("actualización en curso: AirSend se cierra para reemplazar los archivos");
+        AppLog.Info("log.update.applying");
     }
 
     public void Dispose()

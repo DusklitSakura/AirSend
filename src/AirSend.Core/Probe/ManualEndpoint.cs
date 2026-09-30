@@ -9,18 +9,24 @@ public enum ManualEndpointError
     Invalid,
 }
 
-public sealed class ManualEndpointException(ManualEndpointError error, string input)
-    : Exception(Describe(error, input))
+public sealed class ManualEndpointException : AirSendException
 {
-    public ManualEndpointError Error { get; } = error;
-
-    public string Input { get; } = input;
-
-    private static string Describe(ManualEndpointError error, string input) => error switch
+    public ManualEndpointException(ManualEndpointError error, string input)
+        : base(KeyFor(error), new { input })
     {
-        ManualEndpointError.Empty => "the endpoint is empty",
-        ManualEndpointError.ZeroPort => "port 0 is not valid",
-        _ => $"'{input}' is not an IP address or IP:port endpoint",
+        Error = error;
+        Input = input;
+    }
+
+    public ManualEndpointError Error { get; }
+
+    public string Input { get; }
+
+    private static string KeyFor(ManualEndpointError error) => error switch
+    {
+        ManualEndpointError.Empty => "error.endpoint.empty",
+        ManualEndpointError.ZeroPort => "error.endpoint.zero_port",
+        _ => "error.endpoint.invalid",
     };
 }
 
@@ -123,7 +129,9 @@ public static class ManualEndpoint
     public static AirPlayDeviceBuilder CreateManualDevice(IPAddress address, ushort? port, string? name)
     {
         ushort resolvedPort = port ?? DefaultAirPlayPort;
-        string display = string.IsNullOrWhiteSpace(name) ? $"Dispositivo manual {address}" : name.Trim();
+        string display = string.IsNullOrWhiteSpace(name)
+            ? Localization.AppText.Get("name.manual_device", new { address })
+            : name.Trim();
         return new AirPlayDeviceBuilder(address, resolvedPort, display);
     }
 

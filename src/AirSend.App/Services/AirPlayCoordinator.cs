@@ -1,3 +1,4 @@
+using AirSend.Core;
 using System.Collections.Concurrent;
 using System.Net;
 using AirSend.Core.Capture;
@@ -176,12 +177,12 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
     {
         if (!IPAddress.TryParse(ip, out IPAddress? address))
         {
-            throw new AirPlayProbeException($"IP inválida: {ip}");
+            throw new AirPlayProbeException("error.probe.invalid_ip", new { ip });
         }
 
         await AirPlayProbe.ProbeAsync(address, port, cancellationToken).ConfigureAwait(false);
         ConnectedDeviceId = $"manual://{ip}:{port}";
-        AppLog.Info($"connect_device: {name} ({ip}:{port}) respondió a OPTIONS");
+        AppLog.Info("log.device.options_ok", new { name, ip, port });
     }
 
     public void DisconnectDevice()
@@ -228,7 +229,7 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
 
         session.ErrorOccurred += message =>
         {
-            AppLog.Error($"stream error: {message}");
+            AppLog.Error("log.stream.error", new { err = message });
             AsyncError?.Invoke(message);
         };
 
@@ -269,7 +270,7 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
                 }
                 catch (Exception ex) when (ex is IOException or InvalidOperationException)
                 {
-                    AppLog.Warn($"error cerrando el stream {entry.Key}: {ex.Message}");
+                    AppLog.Warn("log.stream.close_failed", new { route = entry.Key, err = AirSendError.Describe(ex) });
                 }
             }
         }
@@ -291,7 +292,7 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
             }
             catch (Exception ex) when (ex is IOException or InvalidOperationException)
             {
-                AppLog.Warn($"no pude ajustar el volumen: {ex.Message}");
+            AppLog.Warn("log.volume.adjust_failed", new { err = AirSendError.Describe(ex) });
             }
         }
     }
@@ -404,7 +405,10 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
     /// </summary>
     private void OnDefaultOutputChanged(string? deviceId)
     {
-        AppLog.Info($"salida predeterminada del sistema → {deviceId ?? "(ninguna)"}");
+        AppLog.Info("log.capture.default_changed", new
+        {
+            device = deviceId ?? AppLog.Text("log.capture.none"),
+        });
 
         foreach (AirPlayStreamSession session in _sessions.Values)
         {
@@ -432,7 +436,7 @@ public sealed class AirPlayCoordinator : IAsyncDisposable
 
         PairingIdentity identity = PairingIdentity.Generate();
         _settings.IdentitySeed = identity.Seed;
-        AppLog.Info($"identidad de emisor creada: {identity.Identifier}");
+        AppLog.Info("log.identity.created", new { id = identity.Identifier });
         return identity;
     }
 }

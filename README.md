@@ -144,7 +144,7 @@ src/AirSend.App           WinUI 3 界面：设备 / 播放 / 设置三个页面�
 src/AirSend.Core          协议与音频核心：mDNS 发现、RTSP 与二进制 plist、SRP-6a、
                           X25519 / Ed25519、ALAC 编码、ChaCha20-Poly1305、RTP、
                           NTP 授时、WASAPI 采集
-tests/AirSend.Core.Tests  122 项单元测试
+tests/AirSend.Core.Tests  135 项单元测试
 docs/screenshots          界面截图
 PORTING.md                与上游 Rust 版本的逐模块对照、验证记录、已知限制
 build-release.ps1         打 zip 的脚本
@@ -152,7 +152,7 @@ build-release.ps1         打 zip 的脚本
 
 ## 验证到什么程度
 
-`dotnet test` 的 122 项测试覆盖：X25519（RFC 7748）、Ed25519（RFC 8032）、SRP-6a
+`dotnet test` 的 135 项测试覆盖：X25519（RFC 7748）、Ed25519（RFC 8032）、SRP-6a
 （与一份独立的 Python 实现逐字节比对）、HKDF-SHA512、TLV8、ChaCha20-Poly1305 通道、
 二进制 plist（用 Python `plistlib` 交叉验证互通性）、RTSP 客户端（含加密响应）、
 mDNS 报文解析（PTR / SRV / TXT / A）、设备归并、延迟映射、ALAC 帧往返（编码器对比

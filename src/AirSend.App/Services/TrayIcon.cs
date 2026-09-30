@@ -135,9 +135,7 @@ public sealed class TrayIcon : IDisposable
         _added = Shell_NotifyIcon(NimAdd, ref data);
         if (!_added)
         {
-            AppLog.Warn(
-                "no pude añadir el icono a la bandeja del sistema " +
-                $"(error {Marshal.GetLastWin32Error()}); la ventana se cerrará al pulsar X");
+                AppLog.Warn("log.tray.add_failed", new { code = Marshal.GetLastWin32Error() });
         }
     }
 

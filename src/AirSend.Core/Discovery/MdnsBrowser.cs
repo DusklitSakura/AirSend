@@ -186,12 +186,15 @@ public sealed class MdnsBrowser : IAsyncDisposable
             var socket = new Socket(family, SocketType.Dgram, ProtocolType.Udp);
             socket.Bind(new IPEndPoint(family == AddressFamily.InterNetwork ? IPAddress.Any : IPAddress.IPv6Any, 0));
             socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 255);
-            AppLog.Debug($"mDNS: socket de consulta unicast en el puerto {((IPEndPoint)socket.LocalEndPoint!).Port}");
+                    AppLog.Debug("log.mdns.unicast_socket", new
+                    {
+                        port = ((IPEndPoint)socket.LocalEndPoint!).Port,
+                    });
             return socket;
         }
         catch (SocketException ex)
         {
-            AppLog.Debug($"mDNS: sin socket unicast ({ex.SocketErrorCode})");
+                    AppLog.Debug("log.mdns.no_unicast_socket", new { error = ex.SocketErrorCode });
             return null;
         }
     }
@@ -211,12 +214,12 @@ public sealed class MdnsBrowser : IAsyncDisposable
             }
 
             JoinMulticastGroups(socket, family);
-            AppLog.Debug($"mDNS: socket {family} listo");
+                    AppLog.Debug("log.mdns.socket_ready", new { family });
             return socket;
         }
         catch (SocketException ex)
         {
-            AppLog.Debug($"mDNS: socket {family} no disponible ({ex.SocketErrorCode})");
+                    AppLog.Debug("log.mdns.socket_unavailable", new { family, error = ex.SocketErrorCode });
             return null;
         }
     }
@@ -261,11 +264,11 @@ public sealed class MdnsBrowser : IAsyncDisposable
                     catch (SocketException)
                     {
                         // Interface refuses the group (e.g. VPN adapters): skip it.
-                        AppLog.Debug($"mDNS: {nic.Name} rechazó el grupo multicast");
+                        AppLog.Debug("log.mdns.multicast_rejected", new { nic = nic.Name });
                         continue;
                     }
 
-                    AppLog.Debug($"mDNS: unido a 224.0.0.251 en {nic.Name} ({info.Address})");
+                        AppLog.Debug("log.mdns.joined", new { nic = nic.Name, address = info.Address });
                 }
             }
         }
@@ -316,7 +319,7 @@ public sealed class MdnsBrowser : IAsyncDisposable
             }
             catch (SocketException)
             {
-                AppLog.Debug("mDNS: fallo al enviar la consulta unicast");
+                AppLog.Debug("log.mdns.unicast_send_failed");
             }
             catch (ObjectDisposedException)
             {
@@ -340,7 +343,7 @@ public sealed class MdnsBrowser : IAsyncDisposable
             catch (SocketException)
             {
                 // Adapter went away; the next query will retry.
-                AppLog.Debug("mDNS: fallo al enviar la consulta");
+                    AppLog.Debug("log.mdns.send_failed");
             }
             catch (ObjectDisposedException)
             {
@@ -417,7 +420,7 @@ public sealed class MdnsBrowser : IAsyncDisposable
                 continue;
             }
 
-            AppLog.Debug($"mDNS: recibidos {received} bytes de {socket.AddressFamily}");
+                AppLog.Debug("log.mdns.received", new { bytes = received, family = socket.AddressFamily });
 
             if (RawPacketReceived is { } rawHandler)
             {
@@ -430,7 +433,7 @@ public sealed class MdnsBrowser : IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                Logging.AppLog.Debug($"mDNS: mensaje descartado ({ex.GetType().Name}: {ex.Message})");
+            Logging.AppLog.Debug("log.mdns.discarded", new { type = ex.GetType().Name, err = AirSendError.Describe(ex) });
             }
         }
     }

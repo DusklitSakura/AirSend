@@ -54,7 +54,16 @@ public readonly record struct RtpHeader(byte PayloadType, ushort Sequence, uint 
 public sealed class RtpAudioSender : IDisposable
 {
     private const int MaxRememberedPackets = 512;
-    private const int UdpJitterBufferNote = 0;
+
+    /// <summary>
+    /// A blocking UDP send can wait forever when the network stalls (a Wi-Fi hiccup, a
+    /// firewall inspecting the traffic). That would stop the audio pump, and with it
+    /// everything waiting on the queue, so sends are given a deadline and the packet
+    /// is dropped instead: RTP tolerates loss, and the receiver asks for retransmits.
+    /// </summary>
+    internal const int SendTimeoutMs = 100;
+
+    private static readonly TimeSpan SendWarningInterval = TimeSpan.FromSeconds(5);
 
     private readonly UdpClient _socket;
     private readonly IPEndPoint _destination;
@@ -65,6 +74,7 @@ public sealed class RtpAudioSender : IDisposable
     private ushort _sequence = (ushort)Random.Shared.Next(1, ushort.MaxValue);
     private uint _timestamp;
     private bool _firstPacketOfBurst = true;
+    private DateTimeOffset _lastSendWarning = DateTimeOffset.MinValue;
 
     public RtpAudioSender(IPAddress destination, int dataPort, AudioCipher? cipher, uint ssrc)
     {
@@ -108,7 +118,14 @@ public sealed class RtpAudioSender : IDisposable
         catch (SocketException ex)
         {
             PacketsDropped++;
-            AppLog.Warn($"RTP send failed: {ex.Message}");
+
+            // A stalled link drops every packet: one warning every few seconds is
+            // enough to explain the gaps without flooding the log.
+            if (DateTimeOffset.UtcNow - _lastSendWarning >= SendWarningInterval)
+            {
+                _lastSendWarning = DateTimeOffset.UtcNow;
+                AppLog.Warn("log.rtp.send_failed", new { dropped = PacketsDropped, err = AirSendError.Describe(ex) });
+            }
         }
 
         _firstPacketOfBurst = false;
@@ -188,15 +205,23 @@ public sealed class RtpAudioSender : IDisposable
 
         if (original is null)
         {
-            AppLog.Debug($"retransmit solicitado para seq {requestedSequence} (no cacheado)");
+            AppLog.Debug("log.rtp.retransmit_requested", new { sequence = requestedSequence });
             return;
         }
 
-        var response = new byte[original.Length];
-        original.CopyTo(response, 0);
-        response[1] = (byte)((response[1] & 0x80) | RtpPayloadTypes.RetransmitResponse);
-        _socket.Send(response, response.Length, _destination);
-        AppLog.Debug($"retransmit enviado para seq {requestedSequence}");
+        try
+        {
+            var response = new byte[original.Length];
+            original.CopyTo(response, 0);
+            response[1] = (byte)((response[1] & 0x80) | RtpPayloadTypes.RetransmitResponse);
+            _socket.Send(response, response.Length, _destination);
+            AppLog.Debug("log.rtp.retransmit_sent", new { sequence = requestedSequence });
+        }
+        catch (SocketException ex)
+        {
+            // Same reasoning as in SendFrame: never block the control loop on a send.
+            AppLog.Warn("log.rtp.retransmit_failed", new { sequence = requestedSequence, err = AirSendError.Describe(ex) });
+        }
     }
 
     public void Dispose() => _socket.Dispose();
@@ -214,6 +239,7 @@ internal static class UdpClientExtensions
         try
         {
             socket.SendBufferSize = 256 * 1024;
+            socket.SendTimeout = RtpAudioSender.SendTimeoutMs;
         }
         catch (SocketException)
         {

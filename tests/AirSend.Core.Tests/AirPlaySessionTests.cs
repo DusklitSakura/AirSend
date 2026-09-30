@@ -468,3 +468,58 @@ public class AirPlaySessionTests
         }
     }
 }
+
+/// <summary>
+/// The test tone ends by waiting for the audio queue to drain. That wait has to be
+/// bounded: the capture keeps feeding the queue while the user plays anything, so an
+/// unbounded loop used to keep the call (and the UI's busy flag) alive forever when
+/// the sender stalled, leaving every playback control greyed out.
+/// </summary>
+public class SessionQueueDrainTests
+{
+    [Fact]
+    public async Task ReturnsImmediatelyWhenNothingIsQueued()
+    {
+        bool drained = await AirPlayStreamSession.DrainQueueAsync(
+            () => 0,
+            TimeSpan.FromSeconds(5),
+            CancellationToken.None);
+
+        Assert.True(drained);
+    }
+
+    [Fact]
+    public async Task GivesUpOnceTheQueueOutlivesTheDeadline()
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        bool drained = await AirPlayStreamSession.DrainQueueAsync(
+            () => 12,
+            TimeSpan.FromMilliseconds(150),
+            CancellationToken.None);
+
+        Assert.False(drained);
+        Assert.InRange(clock.ElapsedMilliseconds, 100, 3000);
+    }
+
+    [Fact]
+    public async Task ReportsSuccessWhenTheQueueEmptiesInTime()
+    {
+        // The pump empties the queue a few polls into the wait, the way it does once
+        // it has caught up with the queued tone.
+        int flag = 0;
+        Task pump = Task.Run(async () =>
+        {
+            await Task.Delay(80);
+            Interlocked.Exchange(ref flag, 1);
+        });
+
+        bool drained = await AirPlayStreamSession.DrainQueueAsync(
+            () => Volatile.Read(ref flag) == 1 ? 0 : 7,
+            TimeSpan.FromSeconds(5),
+            CancellationToken.None);
+
+        await pump;
+        Assert.True(drained);
+    }
+}

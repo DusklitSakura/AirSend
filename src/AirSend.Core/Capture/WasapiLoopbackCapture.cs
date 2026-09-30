@@ -4,7 +4,8 @@ using AirSend.Core.Logging;
 
 namespace AirSend.Core.Capture;
 
-public sealed class AudioCaptureException(string message) : Exception(message);
+public sealed class AudioCaptureException(string messageKey, object? parameters = null, Exception? innerException = null)
+    : AirSendException(messageKey, parameters, innerException);
 
 /// <summary>
 /// System audio capture through WASAPI loopback on the default render device.
@@ -100,12 +101,16 @@ public sealed class WasapiLoopbackCapture : IDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             failure = ex;
-            AppLog.Error("captura WASAPI: bucle terminado con error", ex);
+            AppLog.Error("log.capture.loop_failed", ex);
         }
 
         if (!token.IsCancellationRequested)
         {
-            CaptureInterrupted?.Invoke(failure?.Message ?? "capture_interrupted");
+            // The listener shows this text as-is, so it is resolved in the language the
+            // interface is using right now.
+            CaptureInterrupted?.Invoke(failure is null
+                ? Localization.AppText.Get("error.capture.interrupted")
+                : Localization.AppText.Get("error.capture.failed", new { err = failure.Message }));
         }
     }
 
@@ -153,7 +158,7 @@ public sealed class WasapiLoopbackCapture : IDisposable
             var captureClient = (IAudioCaptureClient)captureClientObject;
 
             Marshal.ThrowExceptionForHR(audioClient.Start());
-            AppLog.Info($"captura WASAPI iniciada: {DeviceName} ({_format})");
+            AppLog.Info("log.capture.started", new { device = DeviceName, format = _format });
 
             int bytesPerFrame = _format.Channels * 2;
 
@@ -227,9 +232,9 @@ public sealed class WasapiLoopbackCapture : IDisposable
     private static object CreateDeviceEnumerator()
     {
         Type type = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"))
-            ?? throw new AudioCaptureException("MMDeviceEnumerator is not registered");
+            ?? throw new AudioCaptureException("error.capture.no_enumerator");
         return Activator.CreateInstance(type)
-            ?? throw new AudioCaptureException("could not create MMDeviceEnumerator");
+            ?? throw new AudioCaptureException("error.capture.enumerator_failed");
     }
 
     private static object Activate(IMMDevice device, Guid interfaceId)

@@ -168,17 +168,25 @@ public sealed class UpdateClient : IDisposable
                     break;
                 }
 
-                AppLog.Warn(
-                    $"descarga de {asset.Name} interrumpida ({ex.Message}); " +
-                    $"reintentando desde {copied / 1024 / 1024} MB");
+                    AppLog.Warn("log.update.download_interrupted", new
+                    {
+                        package = asset.Name,
+                        err = AirSendError.Describe(ex),
+                        mb = copied / 1024 / 1024,
+                    });
 
                 await Task.Delay(RetryDelay * attempt, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        throw new IOException(
-            $"no pude descargar {asset.Name}: {lastError?.Message ?? "intentos agotados"}",
-            lastError);
+        throw new UpdateException(
+            UpdateFailure.Download,
+            "error.update.download_failed",
+            new
+            {
+                package = asset.Name,
+                err = lastError?.Message ?? Localization.AppText.Get("error.update.attempts_exhausted"),
+            });
     }
 
     public void Dispose()
