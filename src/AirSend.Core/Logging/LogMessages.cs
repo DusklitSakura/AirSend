@@ -466,6 +466,34 @@ internal static class LogMessages
                 "no pude preparar la actualización",
                 "could not prepare the update",
                 "无法准备更新"),
+            ["log.update.applied"] = (
+                "actualización a {version} aplicada; la copia anterior ya no está",
+                "update to {version} applied",
+                "已更新到 {version}"),
+            ["log.update.apply_failed"] = (
+                "la actualización falló al copiar los archivos: {err}",
+                "the update failed while copying the files: {err}",
+                "更新在复制文件时失败：{err}"),
+            ["log.update.report_failed"] = (
+                "no pude leer el informe de la actualización: {err}",
+                "could not read the update report: {err}",
+                "无法读取更新结果报告：{err}"),
+            ["log.update.apply_started"] = (
+                "aplicando la actualización {version}: {source} → {target}",
+                "applying update {version}: {source} → {target}",
+                "正在应用更新 {version}：{source} → {target}"),
+            ["log.update.apply_detail"] = (
+                "actualización: {detail}",
+                "update: {detail}",
+                "更新：{detail}"),
+            ["log.update.apply_bad_arguments"] = (
+                "modo actualización sin origen o destino válidos (origen {source}, destino {target})",
+                "update mode without a valid source or target (source {source}, target {target})",
+                "更新模式缺少有效的来源或目标（来源 {source}，目标 {target}）"),
+            ["log.update.relaunch_failed"] = (
+                "no pude reiniciar AirSend tras la actualización",
+                "could not restart AirSend after the update",
+                "更新后无法重新启动 AirSend"),
         };
 
     public static string Format(string? language, string key, object? parameters) =>

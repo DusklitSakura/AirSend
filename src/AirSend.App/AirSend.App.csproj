@@ -7,9 +7,9 @@
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <RootNamespace>AirSend</RootNamespace>
     <AssemblyName>AirSend</AssemblyName>
-    <Version>0.2.2</Version>
-    <FileVersion>0.2.2.0</FileVersion>
-    <AssemblyVersion>0.2.2.0</AssemblyVersion>
+    <Version>0.2.3</Version>
+    <FileVersion>0.2.3.0</FileVersion>
+    <AssemblyVersion>0.2.3.0</AssemblyVersion>
     <Product>AirSend</Product>
     <Description>Send Windows system audio to an AirPlay 2 receiver (HomePod) — WinUI 3 port of Pabldi08/AirSend.</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -20,6 +20,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+
+    <!-- Program.cs has the entry point: besides starting the window it carries the
+         headless update mode (see Program.cs). -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
 
     <!--
       Distribution: unpackaged (no MSIX). The app ships as a folder and is

@@ -1,5 +1,6 @@
 using AirSend.Core;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Compression;
 using AirSend.Core.Logging;
 using AirSend.Core.Updates;
@@ -14,6 +15,9 @@ public enum UpdatePhase
 }
 
 public sealed record UpdateProgress(UpdatePhase Phase, double Fraction, string? PackageName = null);
+
+/// <summary>What the updater reported after an update attempt.</summary>
+public sealed record UpdateOutcome(bool Succeeded, string? Version, int FilesCopied, string? Error);
 
 /// <summary>
 /// Checks GitHub for a newer release and, when the user agrees, downloads it,
@@ -31,6 +35,10 @@ public sealed record UpdateProgress(UpdatePhase Phase, double Fraction, string? 
 public sealed class UpdateService : IDisposable
 {
     private const string StagingPrefix = "AirSend-update-";
+
+    /// <summary>Report the helper script leaves next to the executable.</summary>
+    private const string ReportFileName = UpdateApplier.ReportFileName;
+
     private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan StagingLifetime = TimeSpan.FromDays(1);
@@ -199,31 +207,82 @@ public sealed class UpdateService : IDisposable
 
         progress?.Report(new UpdateProgress(UpdatePhase.Staging, 1, asset.Name));
 
-        string scriptPath = Path.Combine(stagingDirectory, "apply-update.cmd");
-        await File
-            .WriteAllTextAsync(
-                scriptPath,
-                BuildApplyScript(extracted, AppContext.BaseDirectory, Environment.ProcessId),
-                cancellationToken)
-            .ConfigureAwait(false);
-
         AppLog.Info("log.update.staged", new { version = release.Version, path = stagingDirectory });
-        return scriptPath;
+        return Path.Combine(extracted, "AirSend.exe");
     }
 
-    /// <summary>Launches the helper that swaps the files once this process exits.</summary>
-    public void ApplyUpdate(string scriptPath)
+    /// <summary>
+    /// Hands over to the freshly staged copy of AirSend, which waits for this process
+    /// to exit, copies the files over the installation, reports the result and starts
+    /// the app again. Arguments go through <see cref="ProcessStartInfo.ArgumentList"/>
+    /// so paths are escaped by the runtime rather than by string concatenation.
+    /// </summary>
+    public void ApplyUpdate(string stagedExecutable)
     {
-        var startInfo = new ProcessStartInfo("cmd.exe")
+        string stagingDirectory = Path.GetDirectoryName(stagedExecutable) ?? Path.GetTempPath();
+
+        var startInfo = new ProcessStartInfo(stagedExecutable)
         {
-            Arguments = $"/c \"\"{scriptPath}\"\"",
             CreateNoWindow = true,
             UseShellExecute = false,
-            WorkingDirectory = Path.GetDirectoryName(scriptPath) ?? Path.GetTempPath(),
+            WorkingDirectory = stagingDirectory,
         };
+
+        startInfo.ArgumentList.Add("--apply-update");
+        startInfo.ArgumentList.Add("--source");
+        startInfo.ArgumentList.Add(stagingDirectory);
+        startInfo.ArgumentList.Add("--target");
+        startInfo.ArgumentList.Add(AppContext.BaseDirectory);
+        startInfo.ArgumentList.Add("--wait-pid");
+        startInfo.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
 
         Process.Start(startInfo);
         AppLog.Info("log.update.applying");
+    }
+
+    /// <summary>
+    /// Reads (and removes) the report the helper script leaves behind, so the next
+    /// start can say whether the files were actually replaced. The script runs
+    /// detached while the app is gone, which is exactly when a failure would
+    /// otherwise be invisible.
+    /// </summary>
+    public UpdateOutcome? ConsumeOutcomeReport()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, ReportFileName);
+
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            Dictionary<string, string> values = File
+                .ReadAllLines(path)
+                .Select(line => line.Split('=', 2))
+                .Where(parts => parts.Length == 2)
+                .ToDictionary(parts => parts[0].Trim(), parts => parts[1].Trim(), StringComparer.OrdinalIgnoreCase);
+
+            File.Delete(path);
+
+            bool succeeded = values.TryGetValue("result", out string? result)
+                             && result.Equals("ok", StringComparison.OrdinalIgnoreCase);
+            int filesCopied = values.TryGetValue("files", out string? files) && int.TryParse(files, out int parsed)
+                ? parsed
+                : 0;
+
+            return new UpdateOutcome(
+                succeeded,
+                values.TryGetValue("version", out string? version) ? version : null,
+                filesCopied,
+                values.TryGetValue("error", out string? error) ? error : null);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException
+                                       or ArgumentException or InvalidOperationException)
+        {
+            AppLog.Warn("log.update.report_failed", new { err = AirSendError.Describe(ex) });
+            return null;
+        }
     }
 
     public void Dispose()
@@ -233,30 +292,6 @@ public sealed class UpdateService : IDisposable
         _checkGate.Dispose();
         _cts.Dispose();
     }
-
-    private static string BuildApplyScript(string sourceDirectory, string targetDirectory, int processId) => $"""
-        @echo off
-        rem Written by AirSend: waits until the running copy has exited, copies the
-        rem new files over the current installation and starts the app again.
-        setlocal
-        set "AIRSEND_PID={processId}"
-        set "AIRSEND_SRC={sourceDirectory}"
-        set "AIRSEND_DST={targetDirectory}"
-
-        :wait
-        tasklist /FI "PID eq %AIRSEND_PID%" 2>NUL | findstr /C:"%AIRSEND_PID%" >NUL
-        if not errorlevel 1 (
-            ping -n 2 127.0.0.1 >NUL
-            goto wait
-        )
-
-        robocopy "%AIRSEND_SRC%" "%AIRSEND_DST%" /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >NUL
-        if errorlevel 8 exit /b 1
-
-        cd /d "%AIRSEND_DST%"
-        start "" "%AIRSEND_DST%\AirSend.exe"
-        exit /b 0
-        """;
 
     private static UpdateVersion CurrentAssemblyVersion()
     {

@@ -154,7 +154,7 @@ public sealed partial class MainPage : Page
     /// </summary>
     private async Task ShowUpdateDialogAsync(UpdateRelease release)
     {
-        string scriptPath = string.Empty;
+        string stagedExecutable = string.Empty;
 
         var notes = new TextBlock
         {
@@ -255,7 +255,7 @@ public sealed partial class MainPage : Page
 
             UpdatePreparation preparation = await ViewModel.PrepareUpdateAsync(release, reporter);
 
-            if (preparation.ScriptPath is null)
+            if (preparation.StagedExecutable is null)
             {
                 progress.Visibility = Visibility.Collapsed;
                 status.Text = preparation.Error ?? string.Empty;
@@ -263,7 +263,7 @@ public sealed partial class MainPage : Page
                 return;
             }
 
-            scriptPath = preparation.ScriptPath;
+            stagedExecutable = preparation.StagedExecutable;
             dialog.Hide();
         };
 
@@ -279,12 +279,12 @@ public sealed partial class MainPage : Page
             return;
         }
 
-        if (scriptPath.Length == 0)
+        if (stagedExecutable.Length == 0)
         {
             return;
         }
 
-        ViewModel.ApplyUpdate(scriptPath);
+        ViewModel.ApplyUpdate(stagedExecutable);
         (Application.Current as App)?.QuitApplication();
     }
 }

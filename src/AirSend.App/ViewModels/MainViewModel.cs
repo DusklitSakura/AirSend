@@ -15,7 +15,7 @@ using Microsoft.UI.Dispatching;
 namespace AirSend.ViewModels;
 
 /// <summary>Result of staging an update: either the script to run, or what failed.</summary>
-public sealed record UpdatePreparation(string? ScriptPath, string? Error);
+public sealed record UpdatePreparation(string? StagedExecutable, string? Error);
 
 public partial class MainViewModel : ObservableObject
 {
@@ -491,6 +491,31 @@ public partial class MainViewModel : ObservableObject
         _coordinator.StartDiscovery();
         LoadStartupState();
         _updates.Start();
+        ReportUpdateOutcome();
+    }
+
+    /// <summary>
+    /// The helper script runs while the app is gone, so whether the files were really
+    /// replaced is only known on the next start: it leaves a report next to the
+    /// executable, and this is where the user finds out what happened.
+    /// </summary>
+    private void ReportUpdateOutcome()
+    {
+        UpdateOutcome? outcome = _updates.ConsumeOutcomeReport();
+        if (outcome is null)
+        {
+            return;
+        }
+
+        if (outcome.Succeeded)
+        {
+            AppLog.Info("log.update.applied", new { version = outcome.Version ?? "?" });
+            RunOnUi(() => ShowToast(_localization.T("update_applied_toast", new { version = outcome.Version ?? "?" })));
+            return;
+        }
+
+        AppLog.Warn("log.update.apply_failed", new { err = outcome.Error ?? "?" });
+        RunOnUi(() => ShowToast(_localization.T("update_failed_toast", new { err = outcome.Error ?? "?" })));
     }
 
     /// <summary>
@@ -1547,8 +1572,8 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            string script = await _updates.DownloadAndStageAsync(release, progress).ConfigureAwait(false);
-            return new UpdatePreparation(script, null);
+            string stagedExecutable = await _updates.DownloadAndStageAsync(release, progress).ConfigureAwait(false);
+            return new UpdatePreparation(stagedExecutable, null);
         }
         catch (UpdateException ex)
         {
@@ -1566,7 +1591,7 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>Runs the staged update. The page quits the app right afterwards.</summary>
-    public void ApplyUpdate(string scriptPath) => _updates.ApplyUpdate(scriptPath);
+    public void ApplyUpdate(string stagedExecutable) => _updates.ApplyUpdate(stagedExecutable);
 
     /// <summary>
     /// "win-x64 · with the .NET runtime" in the user's language. The update dialog
